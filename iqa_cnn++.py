@@ -21,11 +21,11 @@ model = models.Sequential([
     layers.Dense(1, activation='linear')
 ])
 
-tid2013_loader = kadid10k_loader(download=False)
+data_loader = tid2013_loader()
 
-X_train, y_train = tid2013_loader.train
-X_val, y_val = tid2013_loader.val
-X_test, y_test = tid2013_loader.test
+X_train, y_train = data_loader.train
+X_val, y_val = data_loader.val
+X_test, y_test = data_loader.test
 
 model.compile(optimizer='adam', loss='mean_squared_error', metrics=['mae'])
 history = model.fit(X_train, y_train, epochs=5, batch_size=32, validation_data=(X_val, y_val))
