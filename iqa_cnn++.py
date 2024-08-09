@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import cv2
 
-from data_loader import tid2013_loader
+from data_loader import tid2013_loader, kadid10k_loader
 from tensorflow.keras import layers, models
 
 model = models.Sequential([
@@ -21,7 +21,7 @@ model = models.Sequential([
     layers.Dense(1, activation='linear')
 ])
 
-tid2013_loader = tid2013_loader(download=True)
+tid2013_loader = kadid10k_loader(download=False)
 
 X_train, y_train = tid2013_loader.train
 X_val, y_val = tid2013_loader.val
