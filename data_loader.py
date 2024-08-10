@@ -24,8 +24,7 @@ class database_loader:
         self.exdir = ''    # Directory where the exctracted dataset is stored
         self.score = ''    # MOS/DMOS column name
         self.images = ''   # Directory where the images are stored
-        self.rar_file = '' # Path to the rar file
-        self.zip_file = '' # Path to the zip file
+        self.archive_file = '' # Path to the rar/zip file
 
     def data_exist(self):
         '''Check if patch files are present in the directory.'''
@@ -47,7 +46,7 @@ class database_loader:
         #logging.info(f"{set_type} data loaded successfully.")
         return X, y
     
-    def download(self, file, extract_in='databases'):
+    def download(self, extract_in='databases'):
         '''Download the dataset from the URL and extract it to the directory.
         Args:
             file: (str) either rar_file or zip_file
@@ -57,32 +56,36 @@ class database_loader:
         '''
         try:
             if os.path.exists(self.images or self.data_exist):
-                logging.info("Dataset already downloaded.")
+                logging.info("Dataset found.")
                 return True
-            if not os.path.exists(file):
-                logging.info(f"Dataset not found. Downloading from {self.url}...")
-                urllib.request.urlretrieve(self.url, file)
-            if not self.extract_with_winrar(file, extract_in):
-                self.extract_with_7zip(file, extract_in)
+            if not os.path.exists(self.archive_file):
+                logging.warning(f"Dataset not found. Downloading from {self.url}...")
+                urllib.request.urlretrieve(self.url, self.archive_file, reporthook=self.track_download_progress)
+            if not self.extract_with_winrar(extract_in):
+                self.extract_with_7zip(extract_in)
         except Exception as e:
             logging.error(f"Failed to download or extract dataset: {e}.")
             return False  
         return True
+    
+    def track_download_progress(self, count, block_size, total_size):
+        percent = int(count * block_size * 100 / total_size)
+        print(f'\rDownloading: {percent}% ', end='\r')
 
-    def extract_with_winrar(self, file, extract_in='databases'):
+    def extract_with_winrar(self, extract_in='databases'):
         try:
-            logging.info(f"Extracting {file} with WinRAR...")
-            subprocess.run([self.winrar, 'x', file, extract_in], capture_output=True, text=True)
+            logging.info(f"Extracting {self.archive_file} with WinRAR...")
+            subprocess.run([self.winrar, 'x', self.archive_file, extract_in], capture_output=True, text=True)
             logging.info(f"Dataset extracted in '{self.exdir}'.")
             return True
         except Exception as e:
             logging.error(f"Error using WinRAR: {e}")
             return False
 
-    def extract_with_7zip(self, file, extract_in='databases'):
+    def extract_with_7zip(self, extract_in='databases'):
         try:
-            logging.info(f"Extracting {file} with 7-Zip...")
-            subprocess.run([self.sevenzip, 'x', '-aoa', file, f'-o{extract_in}'], capture_output=True, text=True)
+            logging.info(f"Extracting {self.archive_file} with 7-Zip...")
+            subprocess.run([self.sevenzip, 'x', '-aoa', self.archive_file, f'-o{extract_in}'], capture_output=True, text=True)
             logging.info(f"Dataset extracted in '{self.exdir}'.")
             return True
         except Exception as e:
@@ -94,11 +97,10 @@ class database_loader:
         train_data, val_data = train_test_split(train_data, test_size=0.25, random_state=40)
         return train_data, val_data, test_data
 
-    def preprocess(self, train_data, val_data, test_data, patch_size=32):
+    def preprocess(self, datasets, patch_size=32):
 
-        datasets = [(train_data, 'training'), (val_data, 'validation'), (test_data, 'test')]
-        data = []
-        total_images = sum(len(data) for data, _ in datasets)
+        data = dict()
+        total_images = sum(len(data) for data in datasets.values())
         processed_images = 0
         logging.info('Preprocessing images...')
 
@@ -124,7 +126,7 @@ class database_loader:
                     self.patches.append([patch_filename, mos, distortion])
                     patch_count += 1
         
-        for (dataset, name) in datasets:
+        for (name, dataset) in datasets.items():
             output_dir_full = os.path.join(self.exdir, 'normalized_distorted_images', name, 'full')
             output_dir_patches = os.path.join(self.exdir, 'normalized_distorted_images', name, 'patches')
             os.makedirs(output_dir_full, exist_ok=True)
@@ -149,7 +151,7 @@ class database_loader:
                 print(f"Processed {processed_images}/{total_images} images.", end='\r') 
 
             patches = pd.DataFrame(self.patches, columns=['image', self.score, 'distortion'])
-            data.append(patches)
+            data[name] = patches
         return data
 
     def encode(self, dataframes):
@@ -163,31 +165,31 @@ class database_loader:
             dataframes[i] = dataframes[i].drop(['distortion'], axis=1)
         return dataframes
 
-    def map2tf(self, set_type, data):
+    def map2tf(self, datasets):
         '''
         Maps data into format excected by TensorFlow: adds chanel dimension and stores data in arrays.
-        set_type: 'training', 'validation', 'test' 
-        data: DataFrame with columns: 'image', 'MOS' or 'DMOS', 'distortion' 
         '''
-        images_dir = os.path.join(self.exdir, 'normalized_distorted_images', set_type, 'patches')
-        X, y = [], []
-        for row in data.itertuples(index=False):
-            filename = row[0]
-            score = row[1]
-            file_path = os.path.join(images_dir, filename)
-            if filename.endswith(('.bmp', '.png')) and os.path.exists(file_path):
-                img = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
-                X.append(img)
-                y.append(score)
-            else:
-                logging.warning(f"File not found: {file_path}")
-        X = np.array(X)
-        y = np.array(y)
-        X = X[..., np.newaxis]
-        return X, y
+        dataset_tensors = []
+        for name, data in datasets.items():
+            images_dir = os.path.join(self.exdir, 'normalized_distorted_images', name, 'patches')
+            X, y = [], []
+            for row in data.itertuples(index=False):
+                filename = row[0]
+                score = row[1]
+                file_path = os.path.join(images_dir, filename)
+                if filename.endswith(('.bmp', '.png')) and os.path.exists(file_path):
+                    img = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
+                    X.append(img)
+                    y.append(score)
+                else:
+                    logging.warning(f"File not found: {file_path}")
+            X = np.array(X)
+            y = np.array(y)
+            X = X[..., np.newaxis]
+            dataset_tensors.append((X, y))
+        return dataset_tensors
 # TO DO:
-# error handling: when download=False, download anyway if dataset doesn't exist 
-# error handling: extract when dataset is downloaded but not extracted
+# filter pristine images
 # add error handling in save() and load() methods
 class tid2013_loader(database_loader):
     def __init__(self):
@@ -196,14 +198,14 @@ class tid2013_loader(database_loader):
         self.exdir = os.path.join(self.catalogue, 'tid2013')
         self.score = 'MOS'
         self.images = os.path.join(self.exdir, 'distorted_images')
-        self.rar_file = os.path.join(self.catalogue, 'tid2013.rar')
+        self.archive_file = os.path.join(self.catalogue, 'tid2013.rar')
         self.distortion_mapping = {1: 'wn', 2:'wnc', 3:'scn', 4:'mn', 5:'hfn', 
                                    6:'in', 7:'qn', 8: 'gblur', 9:'idn', 10: 'jpeg', 
                                    11: 'jp2k', 12:'jpegte', 13:'jp2kte'} # According to TID2013 documentation
 
         os.makedirs(self.exdir, exist_ok=True)
 
-        self.download(self.rar_file, extract_in=self.exdir)
+        self.download(extract_in=self.exdir)
         
         if self.data_exist():
             logging.info("Patch files found. Loading patched data...")
@@ -213,12 +215,7 @@ class tid2013_loader(database_loader):
         else:
             data = self.prepare_data()
             logging.info('Mapping data to TensorFlow format...')
-            self.train = self.map2tf('training', data[0])
-            self.val = self.map2tf('validation', data[1])
-            self.test = self.map2tf('test', data[2])
-            self.save_data(self.train, 'train')
-            self.save_data(self.val, 'val')
-            self.save_data(self.test, 'test')
+            self.train, self.val, self.test = self.map2tf(data)
         #self.train, self.val, self.test = self.encode(data)
 
         logging.info("Data loaded successfully.")
@@ -234,9 +231,9 @@ class tid2013_loader(database_loader):
         data.to_csv(os.path.join(self.exdir,'mos_with_names.csv'), index=False)
 
         train_data, val_data, test_data = self.split_data(data)
-        train_data, val_data, test_data = self.preprocess(train_data, val_data, test_data)
-
-        return [train_data, val_data, test_data]
+        datasets = {'training': train_data, 'validation': val_data, 'test': test_data}
+        datasets = self.preprocess(datasets)
+        return datasets
     
 class kadid10k_loader(database_loader):
     def __init__(self):
@@ -245,14 +242,14 @@ class kadid10k_loader(database_loader):
         self.exdir = os.path.join(self.catalogue, 'kadid10k')
         self.score = 'DMOS'
         self.images = os.path.join(self.exdir, 'images')
-        self.zip_file = os.path.join(self.catalogue, 'kadid10k.zip')
+        self.archive_file = os.path.join(self.catalogue, 'kadid10k.zip')
         self.distortion_mapping = {1: 'gblur', 2: 'lblur', 3: 'mblur', 4: 'cdiff', 5: 'cshift', # According to KADID-10k documentation
                                    6: 'cquant', 7: 'csat1', 8: 'csat2', 9: 'jp2k', 10: 'jpeg',
                                    11: 'wniose1', 12: 'wniose2', 13: 'inoise', 14: 'mnoise', 15: 'denoise',
                                    16: 'bright', 17: 'dark', 18: 'meanshft', 19: 'jit', 20: 'patch', 
                                    21: 'pixel', 22: 'quant', 23: 'cblock', 24: 'sharp', 25: 'contrst'} 
         
-        self.download(self.zip_file)
+        self.download()
         
         if self.data_exist():
             logging.info("Patch files found. Loading patched data...")
@@ -262,12 +259,7 @@ class kadid10k_loader(database_loader):
         else:
             data = self.prepare_data()
             logging.info('Mapping data to TensorFlow format...')
-            self.train = self.map2tf('training', data[0])
-            self.val = self.map2tf('validation', data[1])
-            self.test = self.map2tf('test', data[2])
-            self.save_data(self.train, 'train')
-            self.save_data(self.val, 'val')
-            self.save_data(self.test, 'test')
+            self.train, self.val, self.test = self.map2tf(data)
         #self.train, self.val, self.test = self.encode(data)
 
         logging.info("Data loaded successfully.")
@@ -277,12 +269,12 @@ class kadid10k_loader(database_loader):
         data = pd.read_csv(data_path, header=0, usecols=[0, 2])
         data.columns = ['image', 'DMOS']
         data['distortion'] = data['image'].apply(lambda x: self.distortion_mapping.get(int(x.split('_')[1]), 'other'))
-        #if filter:
-            #data = data[data['distortion'].isin(self.distortion_mapping.values())]
+        if True:
+            data = data[data['distortion'].isin(self.distortion_mapping.values())]
         data.to_csv(os.path.join(self.exdir,'dmos_with_names.csv'), index=False)
 
         train_data, val_data, test_data = self.split_data(data)
-        train_data, val_data, test_data = self.preprocess(train_data, val_data, test_data)
-
-        return [train_data, val_data, test_data]
+        datasets = {'training': train_data, 'validation': val_data, 'test': test_data}
+        datasets = self.preprocess(datasets)
+        return datasets
         
