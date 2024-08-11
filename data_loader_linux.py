@@ -11,8 +11,9 @@ from sklearn.preprocessing import LabelEncoder
 import logging
 from datetime import datetime
 
+os.mkdir('logs')
 timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-log_file_path = f'warnings_{timestamp}.log'
+log_file_path = os.path.join('logs',f'warnings_{timestamp}.log')
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 if logger.hasHandlers():

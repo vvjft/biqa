@@ -5,13 +5,15 @@ import urllib.request
 import subprocess
 import os
 from scipy.signal import convolve2d
+from datetime import datetime
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.utils import to_categorical
 from sklearn.preprocessing import LabelEncoder
 import logging
 
+os.mkdir('logs')
 timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-log_file_path = f'warnings_{timestamp}.log'
+log_file_path = os.path.join('logs',f'warnings_{timestamp}.log')
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 if logger.hasHandlers():
@@ -48,13 +50,6 @@ class database_loader:
         return (os.path.exists(os.path.join(self.exdir, 'X_train.npy')) and os.path.exists(os.path.join(self.exdir, 'y_train.npy')) and
                 os.path.exists(os.path.join(self.exdir, 'X_val.npy')) and os.path.exists(os.path.join(self.exdir, 'y_val.npy')) and
                 os.path.exists(os.path.join(self.exdir, 'X_test.npy')) and os.path.exists(os.path.join(self.exdir, 'y_test.npy')))
-
-    def save_data(self, data, set_type):
-        '''Save the data to disk.'''
-        X, y = data
-        np.save(os.path.join(self.exdir, f'X_{set_type}.npy'), X)
-        np.save(os.path.join(self.exdir, f'y_{set_type}.npy'), y)
-        logging.info(f"{set_type} data saved successfully.")
 
     def save_data(self, datasets):
         '''Save the data to disk.'''
@@ -205,7 +200,7 @@ class database_loader:
                 filename = row[0]
                 score = row[1]
                 file_path = os.path.join(images_dir, filename)
-                if filename.endswith(('.bmp', '.png')) and os.path.exists(file_path):
+                if filename.endswith(('.bmp', '.BMP', '.png')) and os.path.exists(file_path):
                     img = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
                     X.append(img)
                     y.append(score)
@@ -218,7 +213,7 @@ class database_loader:
         return dataset_tensors
 # TO DO:
 # filter pristine images
-# add error handling in save() and load() methods
+# save logfiles in separate folder
 class tid2013_loader(database_loader):
     def __init__(self):
         super().__init__()

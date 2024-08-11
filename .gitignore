@@ -6,3 +6,4 @@ wyniki/
 archive/
 test.py
 *.log
+logs/
