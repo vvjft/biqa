@@ -33,7 +33,7 @@ X_val, y_val = data_loader.val
 X_test, y_test = data_loader.test
 
 model.compile(optimizer='adam', loss='mean_squared_error', metrics=['mae'])
-history = model.fit(X_train, y_train, epochs=5, batch_size=32, validation_data=(X_val, y_val))
+history = model.fit(X_train, y_train, epochs=5, batch_size=32, validation_data=(X_val, y_val), verbose=2)
 loss, mae = model.evaluate(X_test, y_test, verbose=0)
 print('Test loss:', loss)
 print('Test MAE:', mae)
