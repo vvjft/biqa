@@ -9,6 +9,7 @@ from sklearn.model_selection import train_test_split
 from tensorflow.keras.utils import to_categorical
 from sklearn.preprocessing import LabelEncoder
 import logging
+from datetime import datetime
 
 timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 log_file_path = f'warnings_{timestamp}.log'
@@ -28,13 +29,10 @@ console_handler.setFormatter(console_formatter)
 
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
-
 class database_loader:
     '''Parent class for database-specific loaders.'''
     def __init__(self):
         self.catalogue = 'databases'
-        self.winrar = 'D:\\Programy\\WinRAR\\WinRAR.exe'
-        self.sevenzip = 'D:\\Programy\\7-Zip\\7z.exe'
 
         ### Attributes to be declared within the child class ###
         self.url = ''      # URL of the dataset (if applicable)
@@ -48,13 +46,6 @@ class database_loader:
         return (os.path.exists(os.path.join(self.exdir, 'X_train.npy')) and os.path.exists(os.path.join(self.exdir, 'y_train.npy')) and
                 os.path.exists(os.path.join(self.exdir, 'X_val.npy')) and os.path.exists(os.path.join(self.exdir, 'y_val.npy')) and
                 os.path.exists(os.path.join(self.exdir, 'X_test.npy')) and os.path.exists(os.path.join(self.exdir, 'y_test.npy')))
-
-    def save_data(self, data, set_type):
-        '''Save the data to disk.'''
-        X, y = data
-        np.save(os.path.join(self.exdir, f'X_{set_type}.npy'), X)
-        np.save(os.path.join(self.exdir, f'y_{set_type}.npy'), y)
-        logging.info(f"{set_type} data saved successfully.")
 
     def save_data(self, datasets):
         '''Save the data to disk.'''
@@ -73,51 +64,50 @@ class database_loader:
             data.append((X, y))
         #logger.info("Data loaded successfully.")
         return data
-    
+
     def download(self, extract_in='databases'):
         '''Download the dataset from the URL and extract it to the directory.
-        Args:
-            file: (str) either rar_file or zip_file
-            extract_in (str, optional): Provide if the dataset is not extracted into a folder named after the file
-        Note:
-            You need to provide path into WinRAR or 7zip exe file.
         '''
         try:
             if os.path.exists(self.images or self.data_exist):
-                logging.info("Dataset found.")
+                logger.info("Dataset found.")
                 return True
             if not os.path.exists(self.archive_file):
-                logging.warning(f"Dataset not found. Downloading from {self.url}...")
+                logger.info(f"Dataset not found. Downloading from {self.url}...")
                 urllib.request.urlretrieve(self.url, self.archive_file, reporthook=self.track_download_progress)
-            if not self.extract_with_winrar(extract_in):
-                self.extract_with_7zip(extract_in)
+            logger.info(f"Extracting {self.archive_file}...")
+            if self.archive_file.endswith('.rar'):
+                self.extract_rar(extract_in)
+            elif self.archive_file.endswith('.zip'):
+                self.extract_zip(extract_in)
+            else:
+                print(f"Unsupported file type: {self.archive_file}")
+                return False
         except Exception as e:
-            logging.error(f"Failed to download or extract dataset: {e}.")
-            return False  
+            logger.error(f"Failed to download or extract dataset: {e}.")
+            return False
         return True
-    
+
     def track_download_progress(self, count, block_size, total_size):
         percent = int(count * block_size * 100 / total_size)
         print(f'\rDownloading: {percent}% ', end='\r')
 
-    def extract_with_winrar(self, extract_in='databases'):
+    def extract_rar(self, extract_in='databases'):
         try:
-            logging.info(f"Extracting {self.archive_file} with WinRAR...")
-            subprocess.run([self.winrar, 'x', self.archive_file, extract_in], capture_output=True, text=True)
-            logging.info(f"Dataset extracted in '{self.exdir}'.")
+            subprocess.run(['unrar', 'x', self.archive_file, extract_in], capture_output=True, text=True)
+            logger.info(f"Dataset extracted in '{self.exdir}'.")
             return True
         except Exception as e:
-            logging.error(f"Error using WinRAR: {e}")
+            logger.error(f"Error using WinRAR: {e}")
             return False
 
-    def extract_with_7zip(self, extract_in='databases'):
+    def extract_zip(self, extract_in='databases'):
         try:
-            logging.info(f"Extracting {self.archive_file} with 7-Zip...")
-            subprocess.run([self.sevenzip, 'x', '-aoa', self.archive_file, f'-o{extract_in}'], capture_output=True, text=True)
-            logging.info(f"Dataset extracted in '{self.exdir}'.")
+            subprocess.run(['7z', 'x', self.archive_file, '-o' + extract_in], capture_output=True, text=True)
+            logger.info(f"Dataset extracted in '{self.exdir}'.")
             return True
         except Exception as e:
-            logging.error(f"Error using 7-Zip: {e}.")
+            logger.error(f"Error using 7-Zip: {e}.")
             return False
 
     def split_data(self, data):
@@ -130,7 +120,7 @@ class database_loader:
         data = dict()
         total_images = sum(len(data) for data in datasets.values())
         processed_images = 0
-        logging.info('Preprocessing images...')
+        logger.info('Preprocessing images...')
 
         def normalize_image(patch, P=3, Q=3, C=1):
             kernel = np.ones((P, Q)) / (P * Q)
@@ -168,7 +158,7 @@ class database_loader:
                 image_path = os.path.join(self.images, filename)
                 image = cv2.imread(image_path)
                 if image is None:
-                    logging.warning(f"Failed to load image: {filename}")
+                    logger.warning(f"Failed to load image: {filename}")
                     continue
                 image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
                 image_normalized = normalize_image(image_gray)
@@ -205,12 +195,12 @@ class database_loader:
                 filename = row[0]
                 score = row[1]
                 file_path = os.path.join(images_dir, filename)
-                if filename.endswith(('.bmp', '.png')) and os.path.exists(file_path):
+                if filename.endswith(('.bmp', '.BMP','.png')) and os.path.exists(file_path):
                     img = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
                     X.append(img)
                     y.append(score)
                 else:
-                    logging.warning(f"File not found: {file_path}")
+                    logger.warning(f"File not found: {file_path}")
             X = np.array(X)
             y = np.array(y)
             X = X[..., np.newaxis]
@@ -245,7 +235,7 @@ class tid2013_loader(database_loader):
             self.save_data({'train': self.train, 'val': self.val, 'test': self.test })
         #self.train, self.val, self.test = self.encode(data)
 
-        logging.info("Data loaded successfully.")
+        logger.info("Data loaded successfully.")
 
     def prepare_data(self, filter=True):
         data_path = os.path.join(self.exdir, 'mos_with_names.txt')
@@ -288,7 +278,7 @@ class kadid10k_loader(database_loader):
             self.save_data({'train': self.train, 'val': self.val, 'test': self.test })
         #self.train, self.val, self.test = self.encode(data)
 
-        logging.info("Data loaded successfully.")
+        logger.info("Data loaded successfully.")
 
     def prepare_data(self, filter=True):
         data_path = os.path.join(self.exdir, 'dmos.csv')

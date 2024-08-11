@@ -7,8 +7,13 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import cv2
 
-from data_loader import tid2013_loader, kadid10k_loader
 from tensorflow.keras import layers, models
+ 
+if os.name =='posix':
+    from data_loader_linux import tid2013_loader, kadid10k_loader
+else:
+    from data_loader import tid2013_loader, kadid10k_loader
+
 
 model = models.Sequential([
     layers.Input(shape=(32, 32, 1)),
