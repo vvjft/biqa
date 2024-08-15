@@ -34,6 +34,7 @@ class database_loader:
     '''Parent class for database-specific loaders.'''
     def __init__(self):
         self.catalogue = 'databases'
+        self.metadata = {'train': None, 'val': None, 'test': None}
 
         ### Attributes to be declared within the child class ###
         self.url = ''      # URL of the dataset (if applicable)
@@ -223,12 +224,13 @@ class tid2013_loader(database_loader):
                                    11: 'jp2k', 12:'jpegte', 13:'jp2kte'} # According to TID2013 documentation
 
         os.makedirs(self.exdir, exist_ok=True)
-
         self.download(extract_in=self.exdir)
         
         if self.data_exist():
-            logger.info("Patch files found. Loading patched data...")
-            self.train, self.val, self.test = self.load_data(['train', 'val', 'test'])
+            logger.info("Loading data...")
+            self.metadata = {name: pd.read_csv(os.path.join(self.exdir, f'{name}-metadata.csv')) for name in self.metadata.keys()}
+            #self.train, self.val, self.test = self.load_data(names)
+            self.train, self.val, self.test = [(np.load(os.path.join(self.exdir, f'X_{name}.npy')), np.load(os.path.join(self.exdir, f'y_{name}.npy'))) for name in self.metadata.keys()]
         else:
             data = self.prepare_data()
             logger.info('Mapping data to TensorFlow format...')
@@ -248,8 +250,9 @@ class tid2013_loader(database_loader):
             data = data[data['distortion'].isin(self.distortion_mapping.values())]
         data.to_csv(os.path.join(self.exdir,'mos_with_names.csv'), index=False)
 
-        train_data, val_data, test_data = self.split_data(data)
-        datasets = {'training': train_data, 'validation': val_data, 'test': test_data}
+        #train_data, val_data, test_data = self.split_data(data)
+        #datasets = {'train': train_data, 'val': val_data, 'test': test_data}
+        datasets = {name: dataset for (name, dataset) in zip(self.metadata.keys(), self.split_data(data))}
         datasets = self.preprocess(datasets)
         return datasets
     
@@ -270,7 +273,7 @@ class kadid10k_loader(database_loader):
         self.download()
         
         if self.data_exist():
-            logger.info("Patch files found. Loading patched data...")
+            logger.info("Loading data...")
             self.train, self.val, self.test = self.load_data(['train', 'val', 'test'])
         else:
             data = self.prepare_data()

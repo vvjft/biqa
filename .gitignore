@@ -7,3 +7,4 @@ archive/
 test.py
 *.log
 logs/
+grouped.csv

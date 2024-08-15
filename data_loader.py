@@ -37,6 +37,7 @@ class database_loader:
         self.catalogue = 'databases'
         self.winrar = 'D:\\Programy\\WinRAR\\WinRAR.exe'
         self.sevenzip = 'D:\\Programy\\7-Zip\\7z.exe'
+        self.metadata = {'train': None, 'val': None, 'test': None}
 
         ### Attributes to be declared within the child class ###
         self.url = ''      # URL of the dataset (if applicable)
@@ -44,7 +45,7 @@ class database_loader:
         self.score = ''    # MOS/DMOS column name
         self.images = ''   # Directory where the images are stored
         self.archive_file = '' # Path to the rar/zip file
-
+        
     def data_exist(self):
         '''Check if patch files are present in the directory.'''
         return (os.path.exists(os.path.join(self.exdir, 'X_train.npy')) and os.path.exists(os.path.join(self.exdir, 'y_train.npy')) and
@@ -65,6 +66,7 @@ class database_loader:
         for name in datasets:
             X = np.load(os.path.join(self.exdir, f'X_{name}.npy'))
             y = np.load(os.path.join(self.exdir, f'y_{name}.npy'))
+            #meta = pd.read_csv(os.path.join(self.exdir, f'{name}-metadata.csv'))
             data.append((X, y))
         #logger.info("Data loaded successfully.")
         return data
@@ -72,7 +74,6 @@ class database_loader:
     def download(self, extract_in='databases'):
         '''Download the dataset from the URL and extract it to the directory.
         Args:
-            file: (str) either rar_file or zip_file
             extract_in (str, optional): Provide if the dataset is not extracted into a folder named after the file
         Note:
             You need to provide path into WinRAR or 7zip exe file.
@@ -121,7 +122,14 @@ class database_loader:
         return train_data, val_data, test_data
 
     def preprocess(self, datasets, patch_size=32):
-
+        '''
+        For datset in {trainig, validation, test}:
+            Reads file paths to images from dataframes -> 
+            Normalizes images and slices them to patches -> 
+            Saves file path to patches to dataframe.
+        Arg: Dictionary of dataframes
+        Return: Dictionary of dataframes
+        '''
         data = dict()
         total_images = sum(len(data) for data in datasets.values())
         processed_images = 0
@@ -171,9 +179,10 @@ class database_loader:
                 cv2.imwrite(os.path.join(output_dir_full, filename), image_normalized)
                 slice_image(image_normalized, patch_size)
                 processed_images += 1  
-                print(f"Processed {processed_images}/{total_images} images.", end='\r') 
+                print(f"Preprocessed {processed_images}/{total_images} images.", end='\r') 
 
             patches = pd.DataFrame(self.patches, columns=['image', self.score, 'distortion'])
+            patches.to_csv(os.path.join(self.exdir, f'{name}-metadata.csv'), index=False)
             data[name] = patches
         return data
 
@@ -213,7 +222,8 @@ class database_loader:
         return dataset_tensors
 # TO DO:
 # filter pristine images
-# save logfiles in separate folder
+# create config file
+# refine datasets dictionary
 class tid2013_loader(database_loader):
     def __init__(self):
         super().__init__()
@@ -227,17 +237,19 @@ class tid2013_loader(database_loader):
                                    11: 'jp2k', 12:'jpegte', 13:'jp2kte'} # According to TID2013 documentation
 
         os.makedirs(self.exdir, exist_ok=True)
-
         self.download(extract_in=self.exdir)
         
         if self.data_exist():
-            logger.info("Patch files found. Loading patched data...")
-            self.train, self.val, self.test = self.load_data(['train', 'val', 'test'])
+            logger.info("Loading data...")
+            self.metadata = {name: pd.read_csv(os.path.join(self.exdir, f'{name}-metadata.csv')) for name in self.metadata.keys()}
+            #self.train, self.val, self.test = self.load_data(names)
+            self.train, self.val, self.test = [(np.load(os.path.join(self.exdir, f'X_{name}.npy')), np.load(os.path.join(self.exdir, f'y_{name}.npy'))) for name in self.metadata.keys()]
         else:
-            data = self.prepare_data()
+            self.metadata = self.prepare_data()
             logger.info('Mapping data to TensorFlow format...')
-            self.train, self.val, self.test = self.map2tf(data)
-            self.save_data({'train': self.train, 'val': self.val, 'test': self.test })
+            self.train, self.val, self.test = self.map2tf(self.metadata)
+            self.save_data({'train': self.train, 'val': self.val, 'test': self.test})
+
         #self.train, self.val, self.test = self.encode(data)
 
         logging.info("Data loaded successfully.")
@@ -252,8 +264,9 @@ class tid2013_loader(database_loader):
             data = data[data['distortion'].isin(self.distortion_mapping.values())]
         data.to_csv(os.path.join(self.exdir,'mos_with_names.csv'), index=False)
 
-        train_data, val_data, test_data = self.split_data(data)
-        datasets = {'training': train_data, 'validation': val_data, 'test': test_data}
+        #train_data, val_data, test_data = self.split_data(data)
+        #datasets = {'train': train_data, 'val': val_data, 'test': test_data}
+        datasets = {name: dataset for (name, dataset) in zip(self.metadata.keys(), self.split_data(data))}
         datasets = self.preprocess(datasets)
         return datasets
     
@@ -274,7 +287,7 @@ class kadid10k_loader(database_loader):
         self.download()
         
         if self.data_exist():
-            logger.info("Patch files found. Loading patched data...")
+            logger.info("Loading...")
             self.train, self.val, self.test = self.load_data(['train', 'val', 'test'])
         else:
             data = self.prepare_data()
@@ -290,8 +303,8 @@ class kadid10k_loader(database_loader):
         data = pd.read_csv(data_path, header=0, usecols=[0, 2])
         data.columns = ['image', 'DMOS']
         data['distortion'] = data['image'].apply(lambda x: self.distortion_mapping.get(int(x.split('_')[1]), 'other'))
-        if True:
-            data = data[data['distortion'].isin(self.distortion_mapping.values())]
+        #if True:
+            #data = data[data['distortion'].isin(self.distortion_mapping.values())]
         data.to_csv(os.path.join(self.exdir,'dmos_with_names.csv'), index=False)
 
         train_data, val_data, test_data = self.split_data(data)
