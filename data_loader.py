@@ -59,17 +59,6 @@ class database_loader:
             np.save(os.path.join(self.exdir, f'X_{name}.npy'), X)
             np.save(os.path.join(self.exdir, f'y_{name}.npy'), y)
         logger.info(f"Data saved successfully.")
-
-    def load_data(self, datasets):
-        '''Load the data from disk.'''
-        data = []
-        for name in datasets:
-            X = np.load(os.path.join(self.exdir, f'X_{name}.npy'))
-            y = np.load(os.path.join(self.exdir, f'y_{name}.npy'))
-            #meta = pd.read_csv(os.path.join(self.exdir, f'{name}-metadata.csv'))
-            data.append((X, y))
-        #logger.info("Data loaded successfully.")
-        return data
     
     def download(self, extract_in='databases'):
         '''Download the dataset from the URL and extract it to the directory.
@@ -131,6 +120,7 @@ class database_loader:
         Return: Dictionary of dataframes
         '''
         data = dict()
+        tensors = dict()
         total_images = sum(len(data) for data in datasets.values())
         processed_images = 0
         logging.info('Preprocessing images...')
@@ -154,7 +144,9 @@ class database_loader:
                     patch_path = os.path.join(output_dir_patches, f"{os.path.splitext(filename)[0]}_patch_{patch_count}{extension}")
                     patch_filename = f"{os.path.splitext(filename)[0]}_patch_{patch_count}{extension}"
                     cv2.imwrite(patch_path, patch)
-                    self.patches.append([patch_filename, mos, distortion])
+                    patches.append([patch_filename, score, distortion])
+                    X.append(patch)
+                    y.append(score)
                     patch_count += 1
         
         for (name, dataset) in datasets.items():
@@ -162,11 +154,12 @@ class database_loader:
             output_dir_patches = os.path.join(self.exdir, 'normalized_distorted_images', name, 'patches')
             os.makedirs(output_dir_full, exist_ok=True)
             os.makedirs(output_dir_patches, exist_ok=True)
-            self.patches = []
+            patches = []
+            X, y = [], []
             for row in dataset.itertuples(index=False):
                 filename = row[0]
                 extension = os.path.splitext(filename)[1]
-                mos = row[1]
+                score = row[1]
                 distortion = row[2]
                 image_path = os.path.join(self.images, filename)
                 image = cv2.imread(image_path)
@@ -181,10 +174,14 @@ class database_loader:
                 processed_images += 1  
                 print(f"Preprocessed {processed_images}/{total_images} images.", end='\r') 
 
-            patches = pd.DataFrame(self.patches, columns=['image', self.score, 'distortion'])
+            patches = pd.DataFrame(patches, columns=['image', self.score, 'distortion'])
             patches.to_csv(os.path.join(self.exdir, f'{name}-metadata.csv'), index=False)
             data[name] = patches
-        return data
+            X = np.array(X)
+            y = np.array(y)
+            X = X[..., np.newaxis]
+            tensors[name] = (X, y)
+        return data, tensors
 
     def encode(self, dataframes):
         '''Encodes distortion labels into one-hot vectors.'''
@@ -223,7 +220,7 @@ class database_loader:
 # TO DO:
 # filter pristine images
 # create config file
-# refine datasets dictionary
+# map2tf() into preprocessing()
 class tid2013_loader(database_loader):
     def __init__(self):
         super().__init__()
@@ -242,14 +239,12 @@ class tid2013_loader(database_loader):
         if self.data_exist():
             logger.info("Loading data...")
             self.metadata = {name: pd.read_csv(os.path.join(self.exdir, f'{name}-metadata.csv')) for name in self.metadata.keys()}
-            #self.train, self.val, self.test = self.load_data(names)
             self.train, self.val, self.test = [(np.load(os.path.join(self.exdir, f'X_{name}.npy')), np.load(os.path.join(self.exdir, f'y_{name}.npy'))) for name in self.metadata.keys()]
         else:
-            self.metadata = self.prepare_data()
-            logger.info('Mapping data to TensorFlow format...')
-            self.train, self.val, self.test = self.map2tf(self.metadata)
+            self.metadata, tensors = self.prepare_data()
+            #logger.info('Mapping data to TensorFlow format...')
+            self.train, self.val, self.test = tensors.values()
             self.save_data({'train': self.train, 'val': self.val, 'test': self.test})
-
         #self.train, self.val, self.test = self.encode(data)
 
         logging.info("Data loaded successfully.")
@@ -264,13 +259,11 @@ class tid2013_loader(database_loader):
             data = data[data['distortion'].isin(self.distortion_mapping.values())]
         data.to_csv(os.path.join(self.exdir,'mos_with_names.csv'), index=False)
 
-        #train_data, val_data, test_data = self.split_data(data)
-        #datasets = {'train': train_data, 'val': val_data, 'test': test_data}
         datasets = {name: dataset for (name, dataset) in zip(self.metadata.keys(), self.split_data(data))}
         datasets = self.preprocess(datasets)
         return datasets
     
-class kadid10k_loader(database_loader):
+class kadid10k_loader(database_loader): 
     def __init__(self):
         super().__init__()
         self.url = 'https://datasets.vqa.mmsp-kn.de/archives/kadid10k.zip'
@@ -287,13 +280,14 @@ class kadid10k_loader(database_loader):
         self.download()
         
         if self.data_exist():
-            logger.info("Loading...")
-            self.train, self.val, self.test = self.load_data(['train', 'val', 'test'])
+            logger.info("Loading data...")
+            self.metadata = {name: pd.read_csv(os.path.join(self.exdir, f'{name}-metadata.csv')) for name in self.metadata.keys()}
+            self.train, self.val, self.test = [(np.load(os.path.join(self.exdir, f'X_{name}.npy')), np.load(os.path.join(self.exdir, f'y_{name}.npy'))) for name in self.metadata.keys()]
         else:
-            data = self.prepare_data()
+            self.metadata = self.prepare_data()
             logger.info('Mapping data to TensorFlow format...')
-            self.train, self.val, self.test = self.map2tf(data)
-            self.save_data({'train': self.train, 'val': self.val, 'test': self.test })
+            self.train, self.val, self.test = self.map2tf(self.metadata)
+            self.save_data({'train': self.train, 'val': self.val, 'test': self.test})
         #self.train, self.val, self.test = self.encode(data)
 
         logging.info("Data loaded successfully.")
@@ -307,8 +301,7 @@ class kadid10k_loader(database_loader):
             #data = data[data['distortion'].isin(self.distortion_mapping.values())]
         data.to_csv(os.path.join(self.exdir,'dmos_with_names.csv'), index=False)
 
-        train_data, val_data, test_data = self.split_data(data)
-        datasets = {'training': train_data, 'validation': val_data, 'test': test_data}
+        datasets = {name: dataset for (name, dataset) in zip(self.metadata.keys(), self.split_data(data))}
         datasets = self.preprocess(datasets)
         return datasets
         

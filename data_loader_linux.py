@@ -171,6 +171,7 @@ class database_loader:
                 print(f"Processed {processed_images}/{total_images} images.", end='\r') 
 
             patches = pd.DataFrame(self.patches, columns=['image', self.score, 'distortion'])
+            patches.to_csv(os.path.join(self.exdir, f'{name}-metadata.csv'), index=False)
             data[name] = patches
         return data
 
@@ -229,12 +230,11 @@ class tid2013_loader(database_loader):
         if self.data_exist():
             logger.info("Loading data...")
             self.metadata = {name: pd.read_csv(os.path.join(self.exdir, f'{name}-metadata.csv')) for name in self.metadata.keys()}
-            #self.train, self.val, self.test = self.load_data(names)
             self.train, self.val, self.test = [(np.load(os.path.join(self.exdir, f'X_{name}.npy')), np.load(os.path.join(self.exdir, f'y_{name}.npy'))) for name in self.metadata.keys()]
         else:
-            data = self.prepare_data()
+            self.metadata = self.prepare_data()
             logger.info('Mapping data to TensorFlow format...')
-            self.train, self.val, self.test = self.map2tf(data)
+            self.train, self.val, self.test = self.map2tf(self.metadata)
             self.save_data({'train': self.train, 'val': self.val, 'test': self.test })
         #self.train, self.val, self.test = self.encode(data)
 
