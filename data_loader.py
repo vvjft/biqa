@@ -58,7 +58,7 @@ class database_loader:
             (X, y) = data
             np.save(os.path.join(self.exdir, f'X_{name}.npy'), X)
             np.save(os.path.join(self.exdir, f'y_{name}.npy'), y)
-        logger.info(f"Data saved successfully.")
+        #logger.info(f"Data saved successfully.")
     
     def download(self, extract_in='databases'):
         '''Download the dataset from the URL and extract it to the directory.
@@ -67,6 +67,44 @@ class database_loader:
         Note:
             You need to provide path into WinRAR or 7zip exe file.
         '''
+        def extract_with_winrar(extract_in='databases'):
+            try:
+                logging.info(f"Extracting {self.archive_file} with WinRAR...")
+                subprocess.run([self.winrar, 'x', self.archive_file, extract_in], capture_output=True, text=True)
+                logging.info(f"Dataset extracted in '{self.exdir}'.")
+                return True
+            except Exception as e:
+                logging.error(f"Error using WinRAR: {e}")
+                return False
+
+        def extract_with_7zip(self, extract_in='databases'):
+            try:
+                logging.info(f"Extracting {self.archive_file} with 7-Zip...")
+                subprocess.run([self.sevenzip, 'x', '-aoa', self.archive_file, f'-o{extract_in}'], capture_output=True, text=True)
+                logging.info(f"Dataset extracted in '{self.exdir}'.")
+                return True
+            except Exception as e:
+                logging.error(f"Error using 7-Zip: {e}.")
+                return False
+
+        def extract_rar(self, extract_in='databases'):
+            try:
+                subprocess.run(['unrar', 'x', self.archive_file, extract_in], capture_output=True, text=True)
+                logger.info(f"Dataset extracted in '{self.exdir}'.")
+                return True
+            except Exception as e:
+                logger.error(f"Error using WinRAR: {e}")
+                return False
+
+        def extract_zip(self, extract_in='databases'):
+            try:
+                subprocess.run(['7z', 'x', self.archive_file, '-o' + extract_in], capture_output=True, text=True)
+                logger.info(f"Dataset extracted in '{self.exdir}'.")
+                return True
+            except Exception as e:
+                logger.error(f"Error using 7-Zip: {e}.")
+                return False
+            
         try:
             if os.path.exists(self.images or self.data_exist):
                 logging.info("Dataset found.")
@@ -74,8 +112,17 @@ class database_loader:
             if not os.path.exists(self.archive_file):
                 logging.warning(f"Dataset not found. Downloading from {self.url}...")
                 urllib.request.urlretrieve(self.url, self.archive_file, reporthook=self.track_download_progress)
-            if not self.extract_with_winrar(extract_in):
-                self.extract_with_7zip(extract_in)
+            if os.name == 'posix':
+                if archive_file.endswith('.rar'):
+                    extract_rar(extract_in)
+                elif archive_file.endswith('.zip'):
+                    extract_zip(extract_in)
+                else:
+                    print(f"Unsupported file type: {self.archive_file}")
+                    return False
+            else:
+                if not extract_with_winrar(extract_in):
+                    extract_with_7zip(extract_in)
         except Exception as e:
             logging.error(f"Failed to download or extract dataset: {e}.")
             return False  
@@ -84,26 +131,6 @@ class database_loader:
     def track_download_progress(self, count, block_size, total_size):
         percent = int(count * block_size * 100 / total_size)
         print(f'\rDownloading: {percent}% ', end='\r')
-
-    def extract_with_winrar(self, extract_in='databases'):
-        try:
-            logging.info(f"Extracting {self.archive_file} with WinRAR...")
-            subprocess.run([self.winrar, 'x', self.archive_file, extract_in], capture_output=True, text=True)
-            logging.info(f"Dataset extracted in '{self.exdir}'.")
-            return True
-        except Exception as e:
-            logging.error(f"Error using WinRAR: {e}")
-            return False
-
-    def extract_with_7zip(self, extract_in='databases'):
-        try:
-            logging.info(f"Extracting {self.archive_file} with 7-Zip...")
-            subprocess.run([self.sevenzip, 'x', '-aoa', self.archive_file, f'-o{extract_in}'], capture_output=True, text=True)
-            logging.info(f"Dataset extracted in '{self.exdir}'.")
-            return True
-        except Exception as e:
-            logging.error(f"Error using 7-Zip: {e}.")
-            return False
 
     def split_data(self, data):
         train_data, test_data = train_test_split(data, test_size=0.2, random_state=40)
@@ -181,6 +208,7 @@ class database_loader:
             y = np.array(y)
             X = X[..., np.newaxis]
             tensors[name] = (X, y)
+        logger.info('Mapping data to TensorFlow format...')
         return data, tensors
 
     def encode(self, dataframes):
@@ -194,33 +222,9 @@ class database_loader:
             dataframes[i] = dataframes[i].drop(['distortion'], axis=1)
         return dataframes
 
-    def map2tf(self, datasets):
-        '''
-        Maps data into format excected by TensorFlow: adds chanel dimension and stores data in arrays.
-        '''
-        dataset_tensors = []
-        for name, data in datasets.items():
-            images_dir = os.path.join(self.exdir, 'normalized_distorted_images', name, 'patches')
-            X, y = [], []
-            for row in data.itertuples(index=False):
-                filename = row[0]
-                score = row[1]
-                file_path = os.path.join(images_dir, filename)
-                if filename.endswith(('.bmp', '.BMP', '.png')) and os.path.exists(file_path):
-                    img = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
-                    X.append(img)
-                    y.append(score)
-                else:
-                    logging.warning(f"File not found: {file_path}")
-            X = np.array(X)
-            y = np.array(y)
-            X = X[..., np.newaxis]
-            dataset_tensors.append((X, y))
-        return dataset_tensors
 # TO DO:
 # filter pristine images
 # create config file
-# map2tf() into preprocessing()
 class tid2013_loader(database_loader):
     def __init__(self):
         super().__init__()
@@ -242,7 +246,6 @@ class tid2013_loader(database_loader):
             self.train, self.val, self.test = [(np.load(os.path.join(self.exdir, f'X_{name}.npy')), np.load(os.path.join(self.exdir, f'y_{name}.npy'))) for name in self.metadata.keys()]
         else:
             self.metadata, tensors = self.prepare_data()
-            #logger.info('Mapping data to TensorFlow format...')
             self.train, self.val, self.test = tensors.values()
             self.save_data({'train': self.train, 'val': self.val, 'test': self.test})
         #self.train, self.val, self.test = self.encode(data)

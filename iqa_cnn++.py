@@ -3,10 +3,7 @@ from tensorflow.keras import layers, models
 from scipy.stats import pearsonr
 from sklearn.metrics import mean_absolute_error
  
-if os.name == 'posix':
-    from data_loader_linux import tid2013_loader, kadid10k_loader
-else:
-    from data_loader import tid2013_loader, kadid10k_loader
+from data_loader import tid2013_loader, kadid10k_loader
 
 def build_model():
     model = models.Sequential([
