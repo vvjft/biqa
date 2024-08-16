@@ -77,7 +77,7 @@ class database_loader:
                 logging.error(f"Error using WinRAR: {e}")
                 return False
 
-        def extract_with_7zip(self, extract_in='databases'):
+        def extract_with_7zip(extract_in='databases'):
             try:
                 logging.info(f"Extracting {self.archive_file} with 7-Zip...")
                 subprocess.run([self.sevenzip, 'x', '-aoa', self.archive_file, f'-o{extract_in}'], capture_output=True, text=True)
@@ -87,7 +87,7 @@ class database_loader:
                 logging.error(f"Error using 7-Zip: {e}.")
                 return False
 
-        def extract_rar(self, extract_in='databases'):
+        def extract_rar(extract_in='databases'):
             try:
                 subprocess.run(['unrar', 'x', self.archive_file, extract_in], capture_output=True, text=True)
                 logger.info(f"Dataset extracted in '{self.exdir}'.")
@@ -104,7 +104,36 @@ class database_loader:
             except Exception as e:
                 logger.error(f"Error using 7-Zip: {e}.")
                 return False
-            
+
+        def extract_in_posix(extract_in='databases'):
+            try:
+                logging.info(f"Extracting {self.archive_file}...")
+                if self.archive_file.endswith('.rar'):    
+                    subprocess.run(['unrar', 'x', self.archive_file, extract_in], capture_output=True, text=True)
+                else:
+                    subprocess.run(['7z', 'x', self.archive_file, '-o' + extract_in], capture_output=True, text=True)
+            except Exception as e:
+                logger.error(f"Error while exctracting: {e}")
+                return False
+            else:
+                logging.info(f"Dataset extracted in '{self.exdir}'.")
+                return True
+
+        def extract_in_windows(extract_in='databases'):
+            try:
+                if self.archive_file.endswith('.rar'):
+                    logging.info(f"Extracting {self.archive_file} with WinRAR...")
+                    subprocess.run([self.winrar, 'x', self.archive_file, extract_in], capture_output=True, text=True)
+                else:
+                    logging.info(f"Extracting {self.archive_file} with 7-Zip...")
+                    subprocess.run([self.sevenzip, 'x', '-aoa', self.archive_file, f'-o{extract_in}'], capture_output=True, text=True)
+            except Exception as e:
+                logger.error(f"Error while exctracting: {e}")
+                return False
+            else:
+                logging.info(f"Dataset extracted in '{self.exdir}'.")
+                return True
+
         try:
             if os.path.exists(self.images or self.data_exist):
                 logging.info("Dataset found.")
@@ -113,16 +142,9 @@ class database_loader:
                 logging.warning(f"Dataset not found. Downloading from {self.url}...")
                 urllib.request.urlretrieve(self.url, self.archive_file, reporthook=self.track_download_progress)
             if os.name == 'posix':
-                if archive_file.endswith('.rar'):
-                    extract_rar(extract_in)
-                elif archive_file.endswith('.zip'):
-                    extract_zip(extract_in)
-                else:
-                    print(f"Unsupported file type: {self.archive_file}")
-                    return False
+                extract_in_posix(extract_in)
             else:
-                if not extract_with_winrar(extract_in):
-                    extract_with_7zip(extract_in)
+                extract_in_windows(extract_in)
         except Exception as e:
             logging.error(f"Failed to download or extract dataset: {e}.")
             return False  
@@ -280,20 +302,22 @@ class kadid10k_loader(database_loader):
                                    16: 'bright', 17: 'dark', 18: 'meanshft', 19: 'jit', 20: 'patch', 
                                    21: 'pixel', 22: 'quant', 23: 'cblock', 24: 'sharp', 25: 'contrst'} 
         
-        self.download()
+        if self.download():
         
-        if self.data_exist():
-            logger.info("Loading data...")
-            self.metadata = {name: pd.read_csv(os.path.join(self.exdir, f'{name}-metadata.csv')) for name in self.metadata.keys()}
-            self.train, self.val, self.test = [(np.load(os.path.join(self.exdir, f'X_{name}.npy')), np.load(os.path.join(self.exdir, f'y_{name}.npy'))) for name in self.metadata.keys()]
-        else:
-            self.metadata = self.prepare_data()
-            logger.info('Mapping data to TensorFlow format...')
-            self.train, self.val, self.test = self.map2tf(self.metadata)
-            self.save_data({'train': self.train, 'val': self.val, 'test': self.test})
-        #self.train, self.val, self.test = self.encode(data)
+            if self.data_exist():
+                logger.info("Loading data...")
+                self.metadata = {name: pd.read_csv(os.path.join(self.exdir, f'{name}-metadata.csv')) for name in self.metadata.keys()}
+                self.train, self.val, self.test = [(np.load(os.path.join(self.exdir, f'X_{name}.npy')), np.load(os.path.join(self.exdir, f'y_{name}.npy'))) for name in self.metadata.keys()]
+            else:
+                self.metadata = self.prepare_data()
+                logger.info('Mapping data to TensorFlow format...')
+                self.train, self.val, self.test = self.map2tf(self.metadata)
+                self.save_data({'train': self.train, 'val': self.val, 'test': self.test})
+            #self.train, self.val, self.test = self.encode(data)
 
-        logging.info("Data loaded successfully.")
+            logging.info("Data loaded successfully.")
+        else:
+            logging.error("Cannot download or extract database.")
 
     def prepare_data(self, filter=True):
         data_path = os.path.join(self.exdir, 'dmos.csv')
