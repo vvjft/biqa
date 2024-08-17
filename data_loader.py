@@ -42,7 +42,7 @@ class database_loader:
         ### Attributes to be declared within the child class ###
         self.url = ''      # URL of the dataset (if applicable)
         self.exdir = ''    # Directory where the exctracted dataset is stored
-        self.score = ''    # MOS/DMOS column name
+        self.measureName = ''    # MOS/DMOS column name
         self.images = ''   # Directory where the images are stored
         self.archive_file = '' # Path to the rar/zip file
         
@@ -50,7 +50,9 @@ class database_loader:
         '''Check if patch files are present in the directory.'''
         return (os.path.exists(os.path.join(self.exdir, 'X_train.npy')) and os.path.exists(os.path.join(self.exdir, 'y_train.npy')) and
                 os.path.exists(os.path.join(self.exdir, 'X_val.npy')) and os.path.exists(os.path.join(self.exdir, 'y_val.npy')) and
-                os.path.exists(os.path.join(self.exdir, 'X_test.npy')) and os.path.exists(os.path.join(self.exdir, 'y_test.npy')))
+                os.path.exists(os.path.join(self.exdir, 'X_test.npy')) and os.path.exists(os.path.join(self.exdir, 'y_test.npy')) and
+                os.path.exists(os.path.join(self.exdir, 'train-metadata.csv')) and os.path.exists(os.path.join(self.exdir, 'val-metadata.csv')) and
+                os.path.exists(os.path.join(self.exdir, 'test-metadata.csv')))
 
     def save_data(self, datasets):
         '''Save the data to disk.'''
@@ -58,7 +60,6 @@ class database_loader:
             (X, y) = data
             np.save(os.path.join(self.exdir, f'X_{name}.npy'), X)
             np.save(os.path.join(self.exdir, f'y_{name}.npy'), y)
-        #logger.info(f"Data saved successfully.")
     
     def download(self, extract_in='databases'):
         '''Download the dataset from the URL and extract it to the directory.
@@ -67,43 +68,9 @@ class database_loader:
         Note:
             You need to provide path into WinRAR or 7zip exe file.
         '''
-        def extract_with_winrar(extract_in='databases'):
-            try:
-                logging.info(f"Extracting {self.archive_file} with WinRAR...")
-                subprocess.run([self.winrar, 'x', self.archive_file, extract_in], capture_output=True, text=True)
-                logging.info(f"Dataset extracted in '{self.exdir}'.")
-                return True
-            except Exception as e:
-                logging.error(f"Error using WinRAR: {e}")
-                return False
-
-        def extract_with_7zip(extract_in='databases'):
-            try:
-                logging.info(f"Extracting {self.archive_file} with 7-Zip...")
-                subprocess.run([self.sevenzip, 'x', '-aoa', self.archive_file, f'-o{extract_in}'], capture_output=True, text=True)
-                logging.info(f"Dataset extracted in '{self.exdir}'.")
-                return True
-            except Exception as e:
-                logging.error(f"Error using 7-Zip: {e}.")
-                return False
-
-        def extract_rar(extract_in='databases'):
-            try:
-                subprocess.run(['unrar', 'x', self.archive_file, extract_in], capture_output=True, text=True)
-                logger.info(f"Dataset extracted in '{self.exdir}'.")
-                return True
-            except Exception as e:
-                logger.error(f"Error using WinRAR: {e}")
-                return False
-
-        def extract_zip(self, extract_in='databases'):
-            try:
-                subprocess.run(['7z', 'x', self.archive_file, '-o' + extract_in], capture_output=True, text=True)
-                logger.info(f"Dataset extracted in '{self.exdir}'.")
-                return True
-            except Exception as e:
-                logger.error(f"Error using 7-Zip: {e}.")
-                return False
+        def track_download_progress(count, block_size, total_size):
+            percent = int(count * block_size * 100 / total_size)
+            print(f'\rDownloading: {percent}% ', end='\r')
 
         def extract_in_posix(extract_in='databases'):
             try:
@@ -140,20 +107,17 @@ class database_loader:
                 return True
             if not os.path.exists(self.archive_file):
                 logging.warning(f"Dataset not found. Downloading from {self.url}...")
-                urllib.request.urlretrieve(self.url, self.archive_file, reporthook=self.track_download_progress)
+                urllib.request.urlretrieve(self.url, self.archive_file, reporthook=track_download_progress)
             if os.name == 'posix':
                 extract_in_posix(extract_in)
             else:
                 extract_in_windows(extract_in)
         except Exception as e:
             logging.error(f"Failed to download or extract dataset: {e}.")
-            return False  
-        return True
+            return False 
+        else: 
+            return True
     
-    def track_download_progress(self, count, block_size, total_size):
-        percent = int(count * block_size * 100 / total_size)
-        print(f'\rDownloading: {percent}% ', end='\r')
-
     def split_data(self, data):
         train_data, test_data = train_test_split(data, test_size=0.2, random_state=40)
         train_data, val_data = train_test_split(train_data, test_size=0.25, random_state=40)
@@ -191,9 +155,9 @@ class database_loader:
                 for j in range(num_patches_x):
                     patch = image[i*patch_size:(i+1)*patch_size, j*patch_size:(j+1)*patch_size]
                     patch_path = os.path.join(output_dir_patches, f"{os.path.splitext(filename)[0]}_patch_{patch_count}{extension}")
-                    patch_filename = f"{os.path.splitext(filename)[0]}_patch_{patch_count}{extension}"
+                    patch_filename = f"{os.path.splitext(filename)[0]}_patch_{patch_count}{extension}"     
                     cv2.imwrite(patch_path, patch)
-                    patches.append([patch_filename, score, distortion])
+                    patches.append([patch_filename, score, distortion, encoding])
                     X.append(patch)
                     y.append(score)
                     patch_count += 1
@@ -205,11 +169,15 @@ class database_loader:
             os.makedirs(output_dir_patches, exist_ok=True)
             patches = []
             X, y = [], []
-            for row in dataset.itertuples(index=False):
-                filename = row[0]
+            for idx, row in dataset.iterrows():
+                filename = row['image']
+                score = row[self.measureName]
+                distortion = row['distortion']
+                encoding = row['encoding']
+                encoding[distortion-1]=1
+                #print(encoding)
+                dataset.at[idx, 'encoding'] = encoding
                 extension = os.path.splitext(filename)[1]
-                score = row[1]
-                distortion = row[2]
                 image_path = os.path.join(self.images, filename)
                 image = cv2.imread(image_path)
                 if image is None:
@@ -223,8 +191,10 @@ class database_loader:
                 processed_images += 1  
                 print(f"Preprocessed {processed_images}/{total_images} images.", end='\r') 
 
-            patches = pd.DataFrame(patches, columns=['image', self.score, 'distortion'])
+            patches = pd.DataFrame(patches, columns=['image', self.measureName, 'distortion', 'encoding'])
+            
             patches.to_csv(os.path.join(self.exdir, f'{name}-metadata.csv'), index=False)
+            print(patches.head())
             data[name] = patches
             X = np.array(X)
             y = np.array(y)
@@ -233,16 +203,17 @@ class database_loader:
         logger.info('Mapping data to TensorFlow format...')
         return data, tensors
 
-    def encode(self, dataframes):
+    def encode(self, metadata):
         '''Encodes distortion labels into one-hot vectors.'''
-        for i in range(len(dataframes)):
-            dists = dataframes[i]['distortion']
+        for dataframe in metadata.values():
+            dists = dataframe['distortion']
             le = LabelEncoder()
             y_class_encoded = le.fit_transform(dists)
-            dists_one_hot = to_categorical(y_class_encoded, num_classes=13).astype(int)
-            dataframes[i]['distortion_encoded'] = [np.array(one_hot) for one_hot in dists_one_hot]
-            dataframes[i] = dataframes[i].drop(['distortion'], axis=1)
-        return dataframes
+            dists_one_hot = to_categorical(y_class_encoded, num_classes=3).astype(int)
+            dataframe['distortion_encoded'] = [np.array(one_hot) for one_hot in dists_one_hot]
+            dataframe = dataframe.drop(['distortion'], axis=1)
+            print(dataframe.head())
+        return metadata
 
 # TO DO:
 # filter pristine images
@@ -252,37 +223,40 @@ class tid2013_loader(database_loader):
         super().__init__()
         self.url = 'https://www.ponomarenko.info/tid2013/tid2013.rar'
         self.exdir = os.path.join(self.catalogue, 'tid2013')
-        self.score = 'MOS'
+        self.measureName = 'MOS'
         self.images = os.path.join(self.exdir, 'distorted_images')
         self.archive_file = os.path.join(self.catalogue, 'tid2013.rar')
-        self.distortion_mapping = {1: 'wn', 2:'wnc', 3:'scn', 4:'mn', 5:'hfn', 
-                                   6:'in', 7:'qn', 8: 'gblur', 9:'idn', 10: 'jpeg', 
-                                   11: 'jp2k', 12:'jpegte', 13:'jp2kte'} # According to TID2013 documentation
+        self.distortion_mapping = {1: 'wn', 2:'wnc', 3:'scn'}#, 4:'mn', 5:'hfn', 
+                                   #6:'in', 7:'qn', 8: 'gblur', 9:'idn', 10: 'jpeg', 
+                                   #11: 'jp2k', 12:'jpegte', 13:'jp2kte'} # According to TID2013 documentation
 
         os.makedirs(self.exdir, exist_ok=True)
-        self.download(extract_in=self.exdir)
-        
-        if self.data_exist():
-            logger.info("Loading data...")
-            self.metadata = {name: pd.read_csv(os.path.join(self.exdir, f'{name}-metadata.csv')) for name in self.metadata.keys()}
-            self.train, self.val, self.test = [(np.load(os.path.join(self.exdir, f'X_{name}.npy')), np.load(os.path.join(self.exdir, f'y_{name}.npy'))) for name in self.metadata.keys()]
+    
+        if self.download(extract_in = self.exdir):
+            if self.data_exist():
+                logger.info("Loading data...")
+                self.metadata = {name: pd.read_csv(os.path.join(self.exdir, f'{name}-metadata.csv')) for name in self.metadata.keys()}
+                self.train, self.val, self.test = [(np.load(os.path.join(self.exdir, f'X_{name}.npy')), np.load(os.path.join(self.exdir, f'y_{name}.npy'))) for name in self.metadata.keys()]
+            else:
+                self.metadata, tensors = self.prepare_data()
+                #self.metadata = self.encode(self.metadata)
+                self.train, self.val, self.test = tensors.values()
+                self.save_data({'train': self.train, 'val': self.val, 'test': self.test})
+            
+            logging.info("Data loaded successfully.")
         else:
-            self.metadata, tensors = self.prepare_data()
-            self.train, self.val, self.test = tensors.values()
-            self.save_data({'train': self.train, 'val': self.val, 'test': self.test})
-        #self.train, self.val, self.test = self.encode(data)
-
-        logging.info("Data loaded successfully.")
-
+            logging.error("Cannot download or extract database.")
+            
     def prepare_data(self, filter=True):
         data_path = os.path.join(self.exdir, 'mos_with_names.txt')
         data = pd.read_csv(data_path, header=None, delimiter=' ')
         data = data.iloc[:, [1, 0]]  # swap column order
         data.columns = ['image', 'MOS']
-        data['distortion'] = data['image'].apply(lambda x: self.distortion_mapping.get(int(x.split('_')[1]), 'other'))
+        data['distortion'] = [int(img.split('_')[1]) for img in data['image']]#data['image'].apply(lambda x: self.distortion_mapping.get(int(x.split('_')[1]), 'other'))
         if filter:
-            data = data[data['distortion'].isin(self.distortion_mapping.values())]
+            data = data[data['distortion'].isin(self.distortion_mapping.keys())]
         data.to_csv(os.path.join(self.exdir,'mos_with_names.csv'), index=False)
+        data['encoding'] = [np.zeros(13, dtype=int) for _ in range(len(data))]#*data.shape[0]
 
         datasets = {name: dataset for (name, dataset) in zip(self.metadata.keys(), self.split_data(data))}
         datasets = self.preprocess(datasets)
@@ -293,7 +267,7 @@ class kadid10k_loader(database_loader):
         super().__init__()
         self.url = 'https://datasets.vqa.mmsp-kn.de/archives/kadid10k.zip'
         self.exdir = os.path.join(self.catalogue, 'kadid10k')
-        self.score = 'DMOS'
+        self.measureName = 'DMOS'
         self.images = os.path.join(self.exdir, 'images')
         self.archive_file = os.path.join(self.catalogue, 'kadid10k.zip')
         self.distortion_mapping = {1: 'gblur', 2: 'lblur', 3: 'mblur', 4: 'cdiff', 5: 'cshift', # According to KADID-10k documentation
@@ -309,9 +283,8 @@ class kadid10k_loader(database_loader):
                 self.metadata = {name: pd.read_csv(os.path.join(self.exdir, f'{name}-metadata.csv')) for name in self.metadata.keys()}
                 self.train, self.val, self.test = [(np.load(os.path.join(self.exdir, f'X_{name}.npy')), np.load(os.path.join(self.exdir, f'y_{name}.npy'))) for name in self.metadata.keys()]
             else:
-                self.metadata = self.prepare_data()
-                logger.info('Mapping data to TensorFlow format...')
-                self.train, self.val, self.test = self.map2tf(self.metadata)
+                self.metadata, tensors = self.prepare_data()
+                self.train, self.val, self.test = tensors.values()
                 self.save_data({'train': self.train, 'val': self.val, 'test': self.test})
             #self.train, self.val, self.test = self.encode(data)
 
