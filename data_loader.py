@@ -46,8 +46,7 @@ class database_loader:
         
     def data_exist(self):
         '''Check if patch files are present in the directory.'''
-        return (os.path.exists(os.path.join(self.exdir, 'X.npy')) and os.path.exists(os.path.join(self.exdir, 'y.npy')) and
-                os.path.exists(os.path.join(self.exdir, 'metadata.csv')))
+        return os.path.exists(os.path.join(self.exdir, 'metadata.csv')) and os.path.exists(os.path.join(self.exdir, 'X.npz'))
     
     def download(self, extract_in='databases'):
         '''Download the dataset from the URL and extract it to the directory.
@@ -140,14 +139,13 @@ class database_loader:
                     patch_filename = f"{os.path.splitext(filename)[0]}_patch_{patch_count}{extension}"     
                     cv2.imwrite(patch_path, patch)
                     patches.append([patch_filename, score, distortion])
-                    X.append(patch)
-                    y.append(score)
+                    X[patch_filename] = patch
                     patch_count += 1
         
         output_dir_patches = os.path.join(self.exdir, 'patches')
         os.makedirs(output_dir_patches, exist_ok=True)
         patches = []
-        X, y = [], []
+        X = {}
         for idx, row in data.iterrows():
             filename = row['image']
             score = row[self.measureName]
@@ -167,14 +165,14 @@ class database_loader:
                 print(f'Preprocessed {processed_images}/{total_images} images.', end='\r') 
                 
         logger.info('Mapping data to TensorFlow format...')
-        X = np.array(X)
-        y = np.array(y)
-        X = X[..., np.newaxis]
-        tensors = (X, y)
+        #X = np.array(X)
+        #X = X[..., np.newaxis]  
         patches = pd.DataFrame(patches, columns = ['image', self.measureName, 'distortion'])
+        #patches['X'] = list(X)
         patches.to_csv(os.path.join(self.exdir, 'metadata.csv'), index=False)
+        np.savez(os.path.join(self.exdir, 'X.npz'), **X)
                   
-        return patches, tensors
+        return patches, X
 
 
 # TO DO:
@@ -198,12 +196,9 @@ class tid2013_loader(database_loader):
             if self.data_exist():
                 logger.info("Loading data...")
                 self.metadata = pd.read_csv(os.path.join(self.exdir, 'metadata.csv'))
-                (self.X, self.y) = (np.load(os.path.join(self.exdir, 'X.npy')), np.load(os.path.join(self.exdir, 'y.npy'))) 
+                self.X = np.load('X.npz')
             else:
-                self.metadata, tensors = self.prepare_data()
-                (self.X, self.y) = tensors
-                np.save(os.path.join(self.exdir, 'X.npy'), self.X)
-                np.save(os.path.join(self.exdir, 'y.npy'), self.y)
+                self.metadata, self.X = self.prepare_data()
             
             logging.info("Data loaded successfully.")
         else:
@@ -217,8 +212,6 @@ class tid2013_loader(database_loader):
         data['distortion'] = [int(img.split('_')[1]) for img in data['image']]
         if filter:
             data = data[data['distortion'].isin(self.distortion_mapping.keys())]
-        #one_hot = pd.get_dummies(data['distortion'], dtype = float)
-        #data['distortion'] = one_hot.values.tolist()
         data = self.preprocess(data)
         return data
     
@@ -285,10 +278,16 @@ def build_model():
     ])
     return model
     
-def split_data(metadata, X, y):
-    meta_train, meta_test, X_train, X_test, y_train, y_test = train_test_split(metadata, X, y, test_size=0.2, random_state=40)
-    meta_train, meta_val, X_train, X_val, y_train, y_val = train_test_split(meta_train, X_train, y_train, test_size=0.25, random_state=40)
-    return (meta_train, X_train, y_train), (meta_val, X_val, y_val), (meta_test, X_test, y_test)
+def split_data(metadata):
+    metadata['image_id'] = metadata['image'].apply(lambda x: '_'.join(x.split('_')[:4]))
+    groups = metadata.groupby('image_id').agg(list).reset_index()
+    train, test = train_test_split(groups, test_size=0.2, random_state=40)
+    train, val = train_test_split(train, test_size=0.25, random_state=40)
+    
+    meta_train = train.explode(['image', 'MOS', 'distortion'])
+    meta_val = val.explode(['image', 'MOS', 'distortion'])
+    meta_test = test.explode(['image', 'MOS', 'distortion'])
+    return meta_train, meta_val, meta_test
 
 def group_results(metadata, measureName):
 
@@ -322,37 +321,35 @@ def build_model2(num_classes):
 
 num_classes = 13
 data_loader = tid2013_loader()
-metadata = data_loader.metadata
+metadata = data_loader.metadata 
+meta_train, meta_val, meta_test = split_data(metadata)
+meta_train.to_csv('meta_train.csv')
+
+y_train_reg, y_val_reg, y_test_reg = np.array(meta_train['MOS'], dtype=np.float32), np.array(meta_val['MOS'], dtype=np.float32), np.array(meta_test['MOS'], dtype=np.float32)
+y_train_class, y_val_class, y_test_class = np.array(meta_train['distortion'], dtype=np.int64), np.array(meta_val['distortion'], dtype=np.int64), np.array(meta_test['distortion'], dtype=np.int64)
+
+
 X = data_loader.X
-y = data_loader.y   
-(meta_train, X_train, y_train_reg), (meta_val, X_val, y_val_reg), (meta_test, X_test, y_test_reg) = split_data(metadata, X, y)
-y_train_class, y_val_class, y_test_class = meta_train['distortion'].to_numpy(), meta_val['distortion'].to_numpy(), meta_test['distortion'].to_numpy()
-'''
-print(X_train.shape)   
-print(X_val.shape)
-print(X_val.shape) 
-print(y_train.shape)   
-print(y_val.shape)
-print(y_val.shape)
+X_train = {image: X[image] for image in meta_train['image'] if image in X}
+X_train = list(X_train.values())
+X_train = np.array(X_train)
+X_train = X_train[..., np.newaxis]  
 
-print(meta_train['MOS'].shape)
-print(y_train.shape) 
-print(all(meta_train['MOS']==y_train))
+#X = np.array(X)
+#X = X[..., np.newaxis]
+#y_reg = np.array(metadata['MOS'])
+#y_class = np.array(metadata['distortion'])
+print(X_train.shape)
+print(type(y_train_reg[0]))
+print(type(y_train_class[0]))
+print(y_train_reg.shape)
+print(y_train_class.shape)
 
-model = build_model()
-model.compile(optimizer='adam', loss='mean_absolute_error')
-model.fit(X_train, y_train, epochs=1, validation_data=(X_val, y_val), verbose=2)
-
-y_pred = model.predict(X_test, verbose=2)
-meta_test['pred_MOS'] = y_pred.flatten()
-grouped = group_results(meta_test, 'MOS')
-correlation, _ = pearsonr(grouped['MOS'], grouped['pred_MOS'])
-print('PLCC:', correlation)
-'''
 model = build_model2(num_classes)
 model.compile(optimizer='adam', loss=['mae', 'sparse_categorical_crossentropy'])
 
-model.fit(X_train, [y_train_reg,  y_train_class], epochs=15, batch_size=32,verbose=2)
+model.fit(X_train, [y_train_reg,  y_train_class], epochs=15, batch_size=32, verbose=2)
+
 y_pred_reg, y_pred_class = model.predict(X_test, verbose=2)
 
 indices = np.argmax(y_pred_class, axis=1)
@@ -360,11 +357,3 @@ meta_test['pred_MOS'] = y_pred_reg.flatten()
 meta_test['pred_distortion'] = indices
 meta_test.to_csv('meta_test.csv')
 print(accuracy_score(meta_test['distortion'], meta_test['pred_distortion']))
-'''
-print(X.shape)
-print(y_train_reg.shape)
-print(y_train_class.shape)
-print(type(X_train))
-print(type(y_train_reg)) 
-print(type(y_train_class))
-'''
