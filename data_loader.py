@@ -106,15 +106,6 @@ class database_loader:
             return True
     
     def preprocess(self, data, patch_size=32):
-        '''
-        For datset in {trainig, validation, test}:
-            Reads file paths to images from dataframes -> 
-            Normalizes images and slices them to patches -> 
-            Saves file path to patches to dataframe.
-        Arg: Dictionary of dataframes
-        Return: Dictionary of dataframes
-        '''
-
         total_images = len(data)
         processed_images = 0
         logging.info('Preprocessing images...')
@@ -164,15 +155,49 @@ class database_loader:
                 processed_images += 1  
                 print(f'Preprocessed {processed_images}/{total_images} images.', end='\r') 
                 
-        logger.info('Mapping data to TensorFlow format...')
-        #X = np.array(X)
-        #X = X[..., np.newaxis]  
         patches = pd.DataFrame(patches, columns = ['image', self.measureName, 'distortion'])
-        #patches['X'] = list(X)
         patches.to_csv(os.path.join(self.exdir, 'metadata.csv'), index=False)
         np.savez(os.path.join(self.exdir, 'X.npz'), **X)
                   
         return patches, X
+        
+    def split_data(self, metadata):
+        logger.info('Splitting data...')
+        metadata['image_id'] = metadata['image'].apply(lambda x: '_'.join(x.split('_')[:4]))
+        groups = metadata.groupby('image_id').agg(list).reset_index()
+        train, test = train_test_split(groups, test_size=0.2, random_state=40)
+        train, val = train_test_split(train, test_size=0.25, random_state=40)
+        
+        self.meta_train = train.explode(['image', self.measureName, 'distortion'])
+        self.meta_val = val.explode(['image', self.measureName, 'distortion'])
+        self.meta_test = test.explode(['image', self.measureName, 'distortion'])
+        
+        self.meta_train.to_csv(os.path.join(self.exdir, 'meta_train.csv'))
+        self.meta_val.to_csv(os.path.join(self.exdir, 'meta_val.csv'))
+        self.meta_test.to_csv(os.path.join(self.exdir, 'meta_test.csv'))
+        
+        
+    def map2tf(self):
+        logger.info('Mapping data to TensorFlow format...')
+        self.y_train_reg, self.y_val_reg, self.y_test_reg = np.array(self.meta_train[self.measureName], dtype=np.float32), np.array(self.meta_val[self.measureName], dtype=np.float32), np.array(self.meta_test[self.measureName], dtype=np.float32)
+        self.y_train_class, self.y_val_class, self.y_test_class = np.array(self.meta_train['distortion'], dtype=np.int64), np.array(self.meta_val['distortion'], dtype=np.int64), np.array(self.meta_test['distortion'], dtype=np.int64)
+        #self.X_train, self.X_valid, self.X_test = np.stack(self.meta_train['X'].values), np.stack(self.meta_val['X'].values), np.stack(self.meta_test['X'].values) 
+        self.X_train = np.array([self.X[image] for image in self.meta_train['image'] if image in self.X])[..., np.newaxis]
+        self.X_val = np.array([self.X[image] for image in self.meta_val['image'] if image in self.X])[..., np.newaxis]
+        self.X_test = np.array([self.X[image] for image in self.meta_test['image'] if image in self.X])[..., np.newaxis]
+        '''
+        np.save(os.path.join(self.exdir, y_train_reg), 'y_train_reg.npy')
+        np.save(os.path.join(self.exdir, y_val_reg), 'y_val_reg.npy')
+        np.save(os.path.join(self.exdir, y_test_reg), 'y_test_reg.npy')
+        np.save(os.path.join(self.exdir, y_train_class), 'y_train_class.npy')
+        np.save(os.path.join(self.exdir, y_val_class), 'y_test_class.npy')
+        np.save(os.path.join(self.exdir, y_test_class), 'y_test_class.npy')
+        
+        np.savez(os.path.join(self.exdir, 'X_train.npz'), X_train)
+        np.savez(os.path.join(self.exdir, 'X_val.npz'), X_val)
+        np.savez(os.path.join(self.exdir, 'X_test.npz'), X_test)
+        '''
+        
 
 
 # TO DO:
@@ -196,9 +221,13 @@ class tid2013_loader(database_loader):
             if self.data_exist():
                 logger.info("Loading data...")
                 self.metadata = pd.read_csv(os.path.join(self.exdir, 'metadata.csv'))
-                self.X = np.load('X.npz')
+                self.X = np.load(os.path.join(self.exdir, 'X.npz'))
+                self.split_data(self.metadata)
+                self.map2tf()
             else:
                 self.metadata, self.X = self.prepare_data()
+                self.split_data(self.metadata)
+                self.map2tf()
             
             logging.info("Data loaded successfully.")
         else:
@@ -264,30 +293,9 @@ from tensorflow.keras import layers, models
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 from scipy.stats import pearsonr
-def build_model():
-    model = models.Sequential([
-        layers.Input(shape=(32, 32, 1)),
-        layers.Conv2D(8, (3, 3), activation='relu'),
-        layers.MaxPooling2D((2, 2)),
-        layers.Conv2D(32, (3, 3), activation='relu'),
-        layers.MaxPooling2D((2, 2)),
-        layers.Flatten(),
-        layers.Dense(128, activation='relu'),
-        layers.Dense(512, activation='relu'),
-        layers.Dense(1, activation='linear')
-    ])
-    return model
-    
-def split_data(metadata):
-    metadata['image_id'] = metadata['image'].apply(lambda x: '_'.join(x.split('_')[:4]))
-    groups = metadata.groupby('image_id').agg(list).reset_index()
-    train, test = train_test_split(groups, test_size=0.2, random_state=40)
-    train, val = train_test_split(train, test_size=0.25, random_state=40)
-    
-    meta_train = train.explode(['image', 'MOS', 'distortion'])
-    meta_val = val.explode(['image', 'MOS', 'distortion'])
-    meta_test = test.explode(['image', 'MOS', 'distortion'])
-    return meta_train, meta_val, meta_test
+
+  
+
 
 def group_results(metadata, measureName):
 
@@ -304,7 +312,7 @@ def group_results(metadata, measureName):
     grouped.to_csv('grouped.csv', index=False, header=True)
     return grouped
 
-def build_model2(num_classes):
+def build_model(num_classes):
     inputs = layers.Input(shape=(32, 32, 1))
     x = layers.Conv2D(8, (3, 3), activation='relu')(inputs)
     x = layers.MaxPooling2D((2, 2))(x)
@@ -321,39 +329,28 @@ def build_model2(num_classes):
 
 num_classes = 13
 data_loader = tid2013_loader()
-metadata = data_loader.metadata 
-meta_train, meta_val, meta_test = split_data(metadata)
-meta_train.to_csv('meta_train.csv')
-
-y_train_reg, y_val_reg, y_test_reg = np.array(meta_train['MOS'], dtype=np.float32), np.array(meta_val['MOS'], dtype=np.float32), np.array(meta_test['MOS'], dtype=np.float32)
-y_train_class, y_val_class, y_test_class = np.array(meta_train['distortion'], dtype=np.int64), np.array(meta_val['distortion'], dtype=np.int64), np.array(meta_test['distortion'], dtype=np.int64)
+meta_test = data_loader.meta_test
+X_train, y_train_reg, y_train_class = data_loader.X_train, data_loader.y_train_reg, data_loader.y_train_class 
+X_val, y_val_reg, y_val_class = data_loader.X_val, data_loader.y_val_reg, data_loader.y_val_class
+X_test, y_test_reg, y_test_class = data_loader.X_test, data_loader.y_test_reg, data_loader.y_test_class
 
 
-X = data_loader.X
-X_train = {image: X[image] for image in meta_train['image'] if image in X}
-X_train = list(X_train.values())
-X_train = np.array(X_train)
-X_train = X_train[..., np.newaxis]  
 
-#X = np.array(X)
-#X = X[..., np.newaxis]
-#y_reg = np.array(metadata['MOS'])
-#y_class = np.array(metadata['distortion'])
-print(X_train.shape)
-print(type(y_train_reg[0]))
-print(type(y_train_class[0]))
-print(y_train_reg.shape)
-print(y_train_class.shape)
-
-model = build_model2(num_classes)
+model = build_model(num_classes)
 model.compile(optimizer='adam', loss=['mae', 'sparse_categorical_crossentropy'])
-
-model.fit(X_train, [y_train_reg,  y_train_class], epochs=15, batch_size=32, verbose=2)
+model.fit(X_train, [y_train_reg,  y_train_class], epochs=5, batch_size=32, verbose=2)
 
 y_pred_reg, y_pred_class = model.predict(X_test, verbose=2)
 
+
+meta_test['MOS'] = pd.to_numeric(meta_test['MOS'], errors='coerce').astype('float32')
+meta_test['distortion'] = pd.to_numeric(meta_test['distortion'], errors='coerce').astype('int64')
 indices = np.argmax(y_pred_class, axis=1)
 meta_test['pred_MOS'] = y_pred_reg.flatten()
 meta_test['pred_distortion'] = indices
 meta_test.to_csv('meta_test.csv')
+print(meta_test.head())
+print(meta_test.info())
+missing_values = meta_test.isnull().sum()
+print(missing_values)
 print(accuracy_score(meta_test['distortion'], meta_test['pred_distortion']))
