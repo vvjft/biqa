@@ -29,11 +29,7 @@ def split_data(metadata, measureName):
     meta_train.set_index('original_index', inplace=True)
     meta_val.set_index('original_index', inplace=True)
     meta_test.set_index('original_index', inplace=True)
-    
-    meta_train.to_csv(os.path.join('meta_train.csv'))
-    meta_val.to_csv(os.path.join('meta_val.csv'))
-    meta_test.to_csv(os.path.join('meta_test.csv'))
-    
+     
     return meta_train, meta_val, meta_test
 
 def build_model(num_classes):
@@ -57,18 +53,19 @@ def group_results(metadata, measureName):
     grouped = metadata.groupby('prefix').agg(
         measure=(measureName, 'first'),  
         pred_measure=(f'pred_{measureName}', 'mean'),
-        distortion=('distortion', 'first')  
+        distortion=('distortion', 'first'),
+        pred_distortion = ('pred_distortion', lambda x: x.mode().iloc[0])  
     ).reset_index()
 
     grouped.rename(columns={'prefix': 'image', 'measure': measureName, 'pred_measure': f'pred_{measureName}'}, inplace=True)
-    print(grouped.head())
-    grouped.to_csv('grouped.csv', index=False, header=True)
     return grouped
+    
 def main():
-    num_classes = 14
-    data_loader = tid2013_loader()
+    num_classes = 26
+    data_loader = kadid10k_loader()
     metadata = data_loader.metadata
-    meta_train, meta_val, meta_test = split_data(metadata, data_loader.measureName)
+    measureName = data_loader.measureName
+    meta_train, meta_val, meta_test = split_data(metadata, measureName)
 
     X = data_loader.X
     y_reg = data_loader.y_reg
@@ -78,20 +75,22 @@ def main():
     y_train_reg, y_val_reg, y_test_reg = y_reg[train_indices], y_reg[val_indices], y_reg[test_indices]
     y_train_class, y_val_class, y_test_class = y_class[train_indices], y_class[val_indices], y_class[test_indices]
 
-
     model = build_model(num_classes)
     model.compile(optimizer='adam', loss=['mae', 'sparse_categorical_crossentropy'])
-    model.fit(X_train, [y_train_reg,  y_train_class], epochs=5, batch_size=32, verbose=2)
+    model.fit(X_train, [y_train_reg,  y_train_class], epochs=1, batch_size=32, verbose=2)
 
     y_pred_reg, y_pred_class = model.predict(X_test, verbose=2)
 
-    meta_test['MOS'] = pd.to_numeric(meta_test['MOS'], errors='coerce').astype('float32')
+    meta_test[measureName] = pd.to_numeric(meta_test[measureName], errors='coerce').astype('float32')
     meta_test['distortion'] = pd.to_numeric(meta_test['distortion'], errors='coerce').astype('int64')
     indices = np.argmax(y_pred_class, axis=1)
-    meta_test['pred_MOS'] = y_pred_reg.flatten()
+    meta_test[f'pred_{measureName}'] = y_pred_reg.flatten()
     meta_test['pred_distortion'] = indices
     meta_test.to_csv('meta_test.csv')
+    results = group_results(meta_test, data_loader.measureName)
+    results.to_csv('results.csv')
 
-print(accuracy_score(meta_test['distortion'], meta_test['pred_distortion']))
+    print(accuracy_score(results['distortion'], results['pred_distortion']))
+    
 if __name__ == "__main__":
     main()

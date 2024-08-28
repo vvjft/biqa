@@ -46,8 +46,8 @@ class database_loader:
         
     def data_exist(self):
         '''Check if patch files are present in the directory.'''
-        return os.path.exists(os.path.join(self.exdir, 'metadata.csv')) and os.path.exists(os.path.join(self.exdir, 'X.npy')
-        and os.path.exists(os.path.join(self.exdir, 'y_reg.npy') )and os.path.exists(os.path.join(self.exdir, 'y_class.npy')))
+        return (os.path.exists(os.path.join(self.exdir, 'metadata.csv')) and os.path.exists(os.path.join(self.exdir, 'X.npy'))
+        and os.path.exists(os.path.join(self.exdir, 'y_reg.npy')) and os.path.exists(os.path.join(self.exdir, 'y_class.npy')))
         
     
     def download(self, extract_in='databases'):
@@ -165,8 +165,8 @@ class database_loader:
         patches.to_csv(os.path.join(self.exdir, 'metadata.csv'), index=False)
         X = np.array(X)
         X = X[..., np.newaxis]
-        y_reg = np.array(y_reg)
-        y_class = np.array(y_class)
+        y_reg = np.array(y_reg, dtype=np.float32)
+        y_class = np.array(y_class, dtype=np.int64)
         np.save(os.path.join(self.exdir, 'X.npy'), X)
         np.save(os.path.join(self.exdir, 'y_reg.npy'), y_reg)
         np.save(os.path.join(self.exdir, 'y_class.npy'), y_class)
@@ -229,32 +229,29 @@ class kadid10k_loader(database_loader):
                                    11: 'wniose1', 12: 'wniose2', 13: 'inoise', 14: 'mnoise', 15: 'denoise',
                                    16: 'bright', 17: 'dark', 18: 'meanshft', 19: 'jit', 20: 'patch', 
                                    21: 'pixel', 22: 'quant', 23: 'cblock', 24: 'sharp', 25: 'contrst'} 
-        
+            
         if self.download():
-        
             if self.data_exist():
                 logger.info("Loading data...")
-                self.metadata = {name: pd.read_csv(os.path.join(self.exdir, f'{name}-metadata.csv')) for name in self.metadata.keys()}
-                self.train, self.val, self.test = [(np.load(os.path.join(self.exdir, f'X_{name}.npy')), np.load(os.path.join(self.exdir, f'y_{name}.npy'))) for name in self.metadata.keys()]
+                self.metadata = pd.read_csv(os.path.join(self.exdir, 'metadata.csv'))
+                self.X = np.load(os.path.join(self.exdir, 'X.npy'))
+                self.y_reg = np.load(os.path.join(self.exdir, 'y_reg.npy'))
+                self.y_class = np.load(os.path.join(self.exdir, 'y_class.npy'))
+                
             else:
-                self.metadata, tensors = self.prepare_data()
-                self.train, self.val, self.test = tensors.values()
-                self.save_data({'train': self.train, 'val': self.val, 'test': self.test})
-            #self.train, self.val, self.test = self.encode(data)
-
+                self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data()                
+                            
             logging.info("Data loaded successfully.")
         else:
             logging.error("Cannot download or extract database.")
 
-    def prepare_data(self, filter=True):
+    def prepare_data(self, filter=False):
         data_path = os.path.join(self.exdir, 'dmos.csv')
         data = pd.read_csv(data_path, header=0, usecols=[0, 2])
         data.columns = ['image', 'DMOS']
-        data['distortion'] = data['image'].apply(lambda x: self.distortion_mapping.get(int(x.split('_')[1]), 'other'))
-        #if True:
-            #data = data[data['distortion'].isin(self.distortion_mapping.values())]
-        data.to_csv(os.path.join(self.exdir,'dmos_with_names.csv'), index=False)
+        data['distortion'] = [int(img.split('_')[1]) for img in data['image']]
+        if filter:
+            data = data[data['distortion'].isin(self.distortion_mapping.keys())]
 
-        datasets = {name: dataset for (name, dataset) in zip(self.metadata.keys(), self.split_data(data))}
-        datasets = self.preprocess(datasets)
-        return datasets
+        data = self.preprocess(data)
+        return data
