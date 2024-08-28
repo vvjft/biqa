@@ -1,35 +1,62 @@
+import pandas as pd
+import numpy as np
 import os
-from tensorflow.keras import layers, models
-from scipy.stats import pearsonr
-from sklearn.metrics import mean_absolute_error
- 
-from data_loader import tid2013_loader, kadid10k_loader
 
-def build_model():
-    model = models.Sequential([
-        layers.Input(shape=(32, 32, 1)),
-        layers.Conv2D(8, (3, 3), activation='relu'),
-        layers.MaxPooling2D((2, 2)),
-        layers.Conv2D(32, (3, 3), activation='relu'),
-        layers.MaxPooling2D((2, 2)),
-        layers.Flatten(),
-        layers.Dense(128, activation='relu'),
-        layers.Dense(512, activation='relu'),
-        layers.Dense(1, activation='linear')
-    ])
+from data_loader import tid2013_loader, kadid10k_loader
+from tensorflow.keras import layers, models
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from scipy.stats import pearsonr
+
+def split_data(metadata, measureName):  
+    metadata = metadata.reset_index().rename(columns={'index': 'original_index'})
+    metadata['image_id'] = metadata['image'].apply(lambda x: '_'.join(x.split('_')[:4]))
+    metadata['original_index'] = metadata['original_index'].astype(int)
+    
+    groups = metadata.groupby('image_id').agg(list).reset_index()
+    
+    train, test = train_test_split(groups, test_size=0.2, random_state=40)
+    train, val = train_test_split(train, test_size=0.25, random_state=40)
+    
+    meta_train = train.explode(['image', measureName, 'distortion', 'original_index'])
+    meta_val = val.explode(['image', measureName, 'distortion', 'original_index'])
+    meta_test = test.explode(['image', measureName, 'distortion', 'original_index'])
+
+    meta_train['original_index'] = meta_train['original_index'].astype(int)
+    meta_val['original_index'] = meta_val['original_index'].astype(int)
+    meta_test['original_index'] = meta_test['original_index'].astype(int)
+    
+    meta_train.set_index('original_index', inplace=True)
+    meta_val.set_index('original_index', inplace=True)
+    meta_test.set_index('original_index', inplace=True)
+    
+    meta_train.to_csv(os.path.join('meta_train.csv'))
+    meta_val.to_csv(os.path.join('meta_val.csv'))
+    meta_test.to_csv(os.path.join('meta_test.csv'))
+    
+    return meta_train, meta_val, meta_test
+
+def build_model(num_classes):
+    inputs = layers.Input(shape=(32, 32, 1))
+    x = layers.Conv2D(8, (3, 3), activation='relu')(inputs)
+    x = layers.MaxPooling2D((2, 2))(x)
+    x = layers.Conv2D(32, (3, 3), activation='relu')(x)
+    x = layers.MaxPooling2D((2, 2))(x)
+    x = layers.Flatten()(x)
+    x = layers.Dense(128, activation='relu')(x)
+    x = layers.Dense(512, activation='relu')(x)
+    
+    regression_output = layers.Dense(1, activation='linear')(x)
+    classification_output = layers.Dense(num_classes, activation='softmax')(x)
+    model = models.Model(inputs=inputs, outputs=[regression_output, classification_output])
     return model
 
+def group_results(metadata, measureName):
+    metadata['prefix'] = metadata['image'].str.extract(r'(^.*_i\d+_\d+_\d+)_patch')
 
-
-def group_results(metadata, results, measureName):
-    test_info = metadata['test']
-    print(test_info.head()) 
-    test_info['preds'] = results
-    test_info['prefix'] = test_info['image'].str.extract(r'(^.*_i\d+_\d+_\d+)_patch')
-
-    grouped = test_info.groupby('prefix').agg(
+    grouped = metadata.groupby('prefix').agg(
         measure=(measureName, 'first'),  
-        pred_measure=('preds', 'mean'),
+        pred_measure=(f'pred_{measureName}', 'mean'),
         distortion=('distortion', 'first')  
     ).reset_index()
 
@@ -37,34 +64,34 @@ def group_results(metadata, results, measureName):
     print(grouped.head())
     grouped.to_csv('grouped.csv', index=False, header=True)
     return grouped
-
-def calculate_metrics(grouped, measureName):
-    correlation, _ = pearsonr(grouped[measureName], grouped[f'pred_{measureName}'])
-    print('PLCC:', correlation)
-
-    mae = mean_absolute_error(grouped[measureName], grouped[f'pred_{measureName}'])
-    print('mae:', mae)
-# TO DO:
-# refine grouping
-# add classification
-# move datset split into iqa_cnn++.py
-# add cross dataset test
 def main():
+    num_classes = 14
     data_loader = tid2013_loader()
-    #data_loader = kadid10k_loader()
-    measureName = data_loader.measureName
     metadata = data_loader.metadata
-    X_train, y_train = data_loader.train
-    X_val, y_val = data_loader.val
-    X_test, y_test = data_loader.test
+    meta_train, meta_val, meta_test = split_data(metadata, data_loader.measureName)
 
-    model = build_model()
-    model.compile(optimizer='adam', loss='mean_absolute_error')
-    model.fit(X_train, y_train, epochs=1, validation_data=(X_val, y_val), verbose=2)
-    y_pred = model.predict(X_test, verbose=2)
+    X = data_loader.X
+    y_reg = data_loader.y_reg
+    y_class = data_loader.y_class
+    train_indices, val_indices, test_indices = meta_train.index, meta_val.index, meta_test.index
+    X_train, X_val, X_test = X[train_indices], X[val_indices], X[test_indices]
+    y_train_reg, y_val_reg, y_test_reg = y_reg[train_indices], y_reg[val_indices], y_reg[test_indices]
+    y_train_class, y_val_class, y_test_class = y_class[train_indices], y_class[val_indices], y_class[test_indices]
 
-    grouped = group_results(metadata, y_pred, measureName)
-    calculate_metrics(grouped, measureName)
 
+    model = build_model(num_classes)
+    model.compile(optimizer='adam', loss=['mae', 'sparse_categorical_crossentropy'])
+    model.fit(X_train, [y_train_reg,  y_train_class], epochs=5, batch_size=32, verbose=2)
+
+    y_pred_reg, y_pred_class = model.predict(X_test, verbose=2)
+
+    meta_test['MOS'] = pd.to_numeric(meta_test['MOS'], errors='coerce').astype('float32')
+    meta_test['distortion'] = pd.to_numeric(meta_test['distortion'], errors='coerce').astype('int64')
+    indices = np.argmax(y_pred_class, axis=1)
+    meta_test['pred_MOS'] = y_pred_reg.flatten()
+    meta_test['pred_distortion'] = indices
+    meta_test.to_csv('meta_test.csv')
+
+print(accuracy_score(meta_test['distortion'], meta_test['pred_distortion']))
 if __name__ == "__main__":
     main()

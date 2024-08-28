@@ -46,7 +46,9 @@ class database_loader:
         
     def data_exist(self):
         '''Check if patch files are present in the directory.'''
-        return os.path.exists(os.path.join(self.exdir, 'metadata.csv')) and os.path.exists(os.path.join(self.exdir, 'X.npz'))
+        return os.path.exists(os.path.join(self.exdir, 'metadata.csv')) and os.path.exists(os.path.join(self.exdir, 'X.npy')
+        and os.path.exists(os.path.join(self.exdir, 'y_reg.npy') )and os.path.exists(os.path.join(self.exdir, 'y_class.npy')))
+        
     
     def download(self, extract_in='databases'):
         '''Download the dataset from the URL and extract it to the directory.
@@ -130,13 +132,17 @@ class database_loader:
                     patch_filename = f"{os.path.splitext(filename)[0]}_patch_{patch_count}{extension}"     
                     cv2.imwrite(patch_path, patch)
                     patches.append([patch_filename, score, distortion])
-                    X[patch_filename] = patch
+                    X.append(patch)
+                    y_reg.append(score)
+                    y_class.append(distortion)                    
                     patch_count += 1
         
         output_dir_patches = os.path.join(self.exdir, 'patches')
         os.makedirs(output_dir_patches, exist_ok=True)
         patches = []
-        X = {}
+        X = []
+        y_reg = []
+        y_class= []
         for idx, row in data.iterrows():
             filename = row['image']
             score = row[self.measureName]
@@ -157,49 +163,16 @@ class database_loader:
                 
         patches = pd.DataFrame(patches, columns = ['image', self.measureName, 'distortion'])
         patches.to_csv(os.path.join(self.exdir, 'metadata.csv'), index=False)
-        np.savez(os.path.join(self.exdir, 'X.npz'), **X)
-                  
-        return patches, X
-        
-    def split_data(self, metadata):
-        logger.info('Splitting data...')
-        metadata['image_id'] = metadata['image'].apply(lambda x: '_'.join(x.split('_')[:4]))
-        groups = metadata.groupby('image_id').agg(list).reset_index()
-        train, test = train_test_split(groups, test_size=0.2, random_state=40)
-        train, val = train_test_split(train, test_size=0.25, random_state=40)
-        
-        self.meta_train = train.explode(['image', self.measureName, 'distortion'])
-        self.meta_val = val.explode(['image', self.measureName, 'distortion'])
-        self.meta_test = test.explode(['image', self.measureName, 'distortion'])
-        
-        self.meta_train.to_csv(os.path.join(self.exdir, 'meta_train.csv'))
-        self.meta_val.to_csv(os.path.join(self.exdir, 'meta_val.csv'))
-        self.meta_test.to_csv(os.path.join(self.exdir, 'meta_test.csv'))
-        
-        
-    def map2tf(self):
-        logger.info('Mapping data to TensorFlow format...')
-        self.y_train_reg, self.y_val_reg, self.y_test_reg = np.array(self.meta_train[self.measureName], dtype=np.float32), np.array(self.meta_val[self.measureName], dtype=np.float32), np.array(self.meta_test[self.measureName], dtype=np.float32)
-        self.y_train_class, self.y_val_class, self.y_test_class = np.array(self.meta_train['distortion'], dtype=np.int64), np.array(self.meta_val['distortion'], dtype=np.int64), np.array(self.meta_test['distortion'], dtype=np.int64)
-        #self.X_train, self.X_valid, self.X_test = np.stack(self.meta_train['X'].values), np.stack(self.meta_val['X'].values), np.stack(self.meta_test['X'].values) 
-        self.X_train = np.array([self.X[image] for image in self.meta_train['image'] if image in self.X])[..., np.newaxis]
-        self.X_val = np.array([self.X[image] for image in self.meta_val['image'] if image in self.X])[..., np.newaxis]
-        self.X_test = np.array([self.X[image] for image in self.meta_test['image'] if image in self.X])[..., np.newaxis]
-        '''
-        np.save(os.path.join(self.exdir, y_train_reg), 'y_train_reg.npy')
-        np.save(os.path.join(self.exdir, y_val_reg), 'y_val_reg.npy')
-        np.save(os.path.join(self.exdir, y_test_reg), 'y_test_reg.npy')
-        np.save(os.path.join(self.exdir, y_train_class), 'y_train_class.npy')
-        np.save(os.path.join(self.exdir, y_val_class), 'y_test_class.npy')
-        np.save(os.path.join(self.exdir, y_test_class), 'y_test_class.npy')
-        
-        np.savez(os.path.join(self.exdir, 'X_train.npz'), X_train)
-        np.savez(os.path.join(self.exdir, 'X_val.npz'), X_val)
-        np.savez(os.path.join(self.exdir, 'X_test.npz'), X_test)
-        '''
-        
-
-
+        X = np.array(X)
+        X = X[..., np.newaxis]
+        y_reg = np.array(y_reg)
+        y_class = np.array(y_class)
+        np.save(os.path.join(self.exdir, 'X.npy'), X)
+        np.save(os.path.join(self.exdir, 'y_reg.npy'), y_reg)
+        np.save(os.path.join(self.exdir, 'y_class.npy'), y_class)
+                          
+        return patches, X, y_reg, y_class
+                    
 # TO DO:
 # filter pristine images
 # create config file
@@ -211,9 +184,9 @@ class tid2013_loader(database_loader):
         self.measureName = 'MOS'
         self.images_dir = os.path.join(self.exdir, 'distorted_images')
         self.archive_file = os.path.join(self.catalogue, 'tid2013.rar')
-        self.distortion_mapping = {1: 'wn', 2:'wnc', 3:'scn'}#, 4:'mn', 5:'hfn', 
-                                   #6:'in', 7:'qn', 8: 'gblur', 9:'idn', 10: 'jpeg', 
-                                   #11: 'jp2k', 12:'jpegte', 13:'jp2kte'} # According to TID2013 documentation
+        self.distortion_mapping = {1: 'wn', 2:'wnc', 3:'scn', 4:'mn', 5:'hfn', 
+                                   6:'in', 7:'qn', 8: 'gblur', 9:'idn', 10: 'jpeg', 
+                                   11: 'jp2k', 12:'jpegte', 13:'jp2kte'} # According to TID2013 documentation
 
         os.makedirs(self.exdir, exist_ok=True)
     
@@ -221,14 +194,13 @@ class tid2013_loader(database_loader):
             if self.data_exist():
                 logger.info("Loading data...")
                 self.metadata = pd.read_csv(os.path.join(self.exdir, 'metadata.csv'))
-                self.X = np.load(os.path.join(self.exdir, 'X.npz'))
-                self.split_data(self.metadata)
-                self.map2tf()
+                self.X = np.load(os.path.join(self.exdir, 'X.npy'))
+                self.y_reg = np.load(os.path.join(self.exdir, 'y_reg.npy'))
+                self.y_class = np.load(os.path.join(self.exdir, 'y_class.npy'))
+                
             else:
-                self.metadata, self.X = self.prepare_data()
-                self.split_data(self.metadata)
-                self.map2tf()
-            
+                self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data()                
+                            
             logging.info("Data loaded successfully.")
         else:
             logging.error("Cannot download or extract database.")
@@ -286,71 +258,3 @@ class kadid10k_loader(database_loader):
         datasets = {name: dataset for (name, dataset) in zip(self.metadata.keys(), self.split_data(data))}
         datasets = self.preprocess(datasets)
         return datasets
-        
-
-
-from tensorflow.keras import layers, models
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
-from scipy.stats import pearsonr
-
-  
-
-
-def group_results(metadata, measureName):
-
-    metadata['prefix'] = metadata['image'].str.extract(r'(^.*_i\d+_\d+_\d+)_patch')
-
-    grouped = metadata.groupby('prefix').agg(
-        measure=(measureName, 'first'),  
-        pred_measure=('pred_MOS', 'mean'),
-        distortion=('distortion', 'first')  
-    ).reset_index()
-
-    grouped.rename(columns={'prefix': 'image', 'measure': measureName, 'pred_measure': f'pred_{measureName}'}, inplace=True)
-    print(grouped.head())
-    grouped.to_csv('grouped.csv', index=False, header=True)
-    return grouped
-
-def build_model(num_classes):
-    inputs = layers.Input(shape=(32, 32, 1))
-    x = layers.Conv2D(8, (3, 3), activation='relu')(inputs)
-    x = layers.MaxPooling2D((2, 2))(x)
-    x = layers.Conv2D(32, (3, 3), activation='relu')(x)
-    x = layers.MaxPooling2D((2, 2))(x)
-    x = layers.Flatten()(x)
-    x = layers.Dense(128, activation='relu')(x)
-    x = layers.Dense(512, activation='relu')(x)
-    
-    regression_output = layers.Dense(1, activation='linear')(x)
-    classification_output = layers.Dense(num_classes, activation='softmax')(x)
-    model = models.Model(inputs=inputs, outputs=[regression_output, classification_output])
-    return model
-
-num_classes = 13
-data_loader = tid2013_loader()
-meta_test = data_loader.meta_test
-X_train, y_train_reg, y_train_class = data_loader.X_train, data_loader.y_train_reg, data_loader.y_train_class 
-X_val, y_val_reg, y_val_class = data_loader.X_val, data_loader.y_val_reg, data_loader.y_val_class
-X_test, y_test_reg, y_test_class = data_loader.X_test, data_loader.y_test_reg, data_loader.y_test_class
-
-
-
-model = build_model(num_classes)
-model.compile(optimizer='adam', loss=['mae', 'sparse_categorical_crossentropy'])
-model.fit(X_train, [y_train_reg,  y_train_class], epochs=5, batch_size=32, verbose=2)
-
-y_pred_reg, y_pred_class = model.predict(X_test, verbose=2)
-
-
-meta_test['MOS'] = pd.to_numeric(meta_test['MOS'], errors='coerce').astype('float32')
-meta_test['distortion'] = pd.to_numeric(meta_test['distortion'], errors='coerce').astype('int64')
-indices = np.argmax(y_pred_class, axis=1)
-meta_test['pred_MOS'] = y_pred_reg.flatten()
-meta_test['pred_distortion'] = indices
-meta_test.to_csv('meta_test.csv')
-print(meta_test.head())
-print(meta_test.info())
-missing_values = meta_test.isnull().sum()
-print(missing_values)
-print(accuracy_score(meta_test['distortion'], meta_test['pred_distortion']))
