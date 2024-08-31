@@ -43,6 +43,7 @@ class database_loader:
         self.images_dir = ''   # Directory where the images are stored
         self.archive_file = '' # Path to the rar/zip file
         self.metadata = None
+        self.num_classes = None
         
     def data_exist(self):
         '''Check if patch files are present in the directory.'''
@@ -184,9 +185,20 @@ class tid2013_loader(database_loader):
         self.measureName = 'MOS'
         self.images_dir = os.path.join(self.exdir, 'distorted_images')
         self.archive_file = os.path.join(self.catalogue, 'tid2013.rar')
-        self.distortion_mapping = {1: 'wn', 2:'wnc', 3:'scn', 4:'mn', 5:'hfn', 
-                                   6:'in', 7:'qn', 8: 'gblur', 9:'idn', 10: 'jpeg', 
-                                   11: 'jp2k', 12:'jpegte', 13:'jp2kte'} # According to TID2013 documentation
+        self.distortion_mapping = {1: 'wn', 2:'wnc', 3:'scn', 4:'mn', 5:'hfn',  # According to TID2013 documentation
+                                    6:'inoise', 7:'qn', 8: 'gblur', 9:'idn', 10: 'jpeg', 11: 'jp2k', 12:'jpegte', 13:'jp2kte',
+                                    14:'non-eccnoise', 15:'loc_blk-wise_dists', 16:'meanshft', 17:'contrast', 18:'satur', 19:'mnoise',
+                                    20:'cnoise', 21:'noise_compress', 22:'dith_quant', 23:'chrome', 24:'recon'}
+                                     
+        self.distortion_mapping_kadid10k = {11: 'wn', 12:'wnc', 13:'inoise', 1: 'gblur',
+                                         15:'idn', 10: 'jpeg', 9: 'jp2k',
+                                         18:'meanshft', 14:'mnoise', 6:'dith_quant'}     
+        ''' 
+        self.distortion_mapping_live = {1: 'wn', 2:'wnc', 3:'scn', 4:'mn', 5:'hfn', 
+                                     6:'inoise', 7:'qn', 8: 'gblur', 9:'idn', 10: 'jpeg',
+                                     11: 'jp2k', 12:'jpegte', 13:'jp2kte'}
+        '''                              
+        self.num_classes = len(self.distortion_mapping)+1                                   
 
         os.makedirs(self.exdir, exist_ok=True)
     
@@ -196,8 +208,7 @@ class tid2013_loader(database_loader):
                 self.metadata = pd.read_csv(os.path.join(self.exdir, 'metadata.csv'))
                 self.X = np.load(os.path.join(self.exdir, 'X.npy'))
                 self.y_reg = np.load(os.path.join(self.exdir, 'y_reg.npy'))
-                self.y_class = np.load(os.path.join(self.exdir, 'y_class.npy'))
-                
+                self.y_class = np.load(os.path.join(self.exdir, 'y_class.npy'))        
             else:
                 self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data()                
                             
@@ -205,14 +216,18 @@ class tid2013_loader(database_loader):
         else:
             logging.error("Cannot download or extract database.")
             
-    def prepare_data(self, filter = True):
+    def prepare_data(self, filter = 'kadid10k'):
         data_path = os.path.join(self.exdir, 'mos_with_names.txt')
         data = pd.read_csv(data_path, header=None, delimiter=' ')
         data = data.iloc[:, [1, 0]]  # swap column order
         data.columns = ['image', 'MOS']
         data['distortion'] = [int(img.split('_')[1]) for img in data['image']]
-        if filter:
-            data = data[data['distortion'].isin(self.distortion_mapping.keys())]
+        if filter=='kadid10k':
+            data['distortion'] = [self.distortion_mapping[int(img.split('_')[1])] for img in data['image']]       
+            data = data[data['distortion'].isin(self.distortion_mapping_kadid10k.values())]
+            reverse_dict = {v:k for k,v in self.distortion_mapping_kadid10k.items() }
+            data['distortion'] = data['distortion'].map(reverse_dict)
+            
         data = self.preprocess(data)
         return data
     
@@ -225,10 +240,15 @@ class kadid10k_loader(database_loader):
         self.images_dir = os.path.join(self.exdir, 'images')
         self.archive_file = os.path.join(self.catalogue, 'kadid10k.zip')
         self.distortion_mapping = {1: 'gblur', 2: 'lblur', 3: 'mblur', 4: 'cdiff', 5: 'cshift', # According to KADID-10k documentation
-                                   6: 'cquant', 7: 'csat1', 8: 'csat2', 9: 'jp2k', 10: 'jpeg',
-                                   11: 'wniose1', 12: 'wniose2', 13: 'inoise', 14: 'mnoise', 15: 'denoise',
-                                   16: 'bright', 17: 'dark', 18: 'meanshft', 19: 'jit', 20: 'patch', 
-                                   21: 'pixel', 22: 'quant', 23: 'cblock', 24: 'sharp', 25: 'contrst'} 
+                                6: 'dith_quant', 7: 'csat1', 8: 'csat2', 9: 'jp2k', 10: 'jpeg',
+                                11: 'wn', 12: 'wnc', 13: 'inoise', 14: 'mnoise', 15: 'idn',
+                                16: 'bright', 17: 'dark', 18: 'meanshft', 19: 'jit', 20: 'patch', 
+                                21: 'pixel', 22: 'quant', 23: 'cblock', 24: 'sharp', 25: 'contrst'}
+                                
+        self.distortion_mapping_tid2013 = {8: 'gblur', 22: 'dith_quant',  11: 'jp2k', 10: 'jpeg', 1: 'wn', 
+                                        2: 'wnc', 9: 'idn', 6: 'inoise', 19:'mnoise', 16:'meanshft'} 
+                                                                          
+        self.num_classes = len(self.distortion_mapping)+1                                                                     
             
         if self.download():
             if self.data_exist():
@@ -245,13 +265,26 @@ class kadid10k_loader(database_loader):
         else:
             logging.error("Cannot download or extract database.")
 
-    def prepare_data(self, filter=False):
+    def prepare_data(self, filter='tid2013'):
         data_path = os.path.join(self.exdir, 'dmos.csv')
         data = pd.read_csv(data_path, header=0, usecols=[0, 2])
         data.columns = ['image', 'DMOS']
         data['distortion'] = [int(img.split('_')[1]) for img in data['image']]
-        if filter:
-            data = data[data['distortion'].isin(self.distortion_mapping.keys())]
+        if filter=='tid2013':
+            # Filter the data to keep only the distortions present in `tid2013`
+            data['distortion_name'] = data['distortion'].map(self.distortion_mapping)
+            
+            # Keep only the distortions that are in `distortion_mapping_tid2013`
+            data = data[data['distortion_name'].isin(self.distortion_mapping_tid2013.values())]
+            
+            # Map back to the original keys in `distortion_mapping`
+            reverse_dict = {v: k for k, v in self.distortion_mapping.items()}
+            data['distortion'] = data['distortion_name'].map(reverse_dict)
+            
+            # Drop the `distortion_name` column as it's no longer needed
+            data = data.drop(columns=['distortion_name'])
+            
+            self.num_classes = len(self.distortion_mapping_tid2013) + 1
 
         data = self.preprocess(data)
         return data

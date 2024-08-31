@@ -7,31 +7,46 @@ from tensorflow.keras import layers, models
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 from scipy.stats import pearsonr
+from scipy.optimize import curve_fit
 
-def split_data(metadata, measureName):  
+def split_data(metadata, measureName, validation=True):  
     metadata = metadata.reset_index().rename(columns={'index': 'original_index'})
     metadata['image_id'] = metadata['image'].apply(lambda x: '_'.join(x.split('_')[:4]))
     metadata['original_index'] = metadata['original_index'].astype(int)
     
     groups = metadata.groupby('image_id').agg(list).reset_index()
-    
     train, test = train_test_split(groups, test_size=0.2, random_state=40)
-    train, val = train_test_split(train, test_size=0.25, random_state=40)
     
-    meta_train = train.explode(['image', measureName, 'distortion', 'original_index'])
-    meta_val = val.explode(['image', measureName, 'distortion', 'original_index'])
-    meta_test = test.explode(['image', measureName, 'distortion', 'original_index'])
+    if validation:
+        train, val = train_test_split(train, test_size=0.25, random_state=40)
+        datasets = [train, val, test]
+    else:
+        datasets = [train, test]
+        
+    meta_sets = []
+    for dataset in datasets:
+        meta_set = dataset.explode(['image', measureName, 'distortion', 'original_index'])
+        meta_set['original_index'] = meta_set['original_index'].astype(int) 
+        meta_set.set_index('original_index', inplace=True) 
+        meta_sets.append(meta_set)
+    return meta_sets 
 
-    meta_train['original_index'] = meta_train['original_index'].astype(int)
-    meta_val['original_index'] = meta_val['original_index'].astype(int)
-    meta_test['original_index'] = meta_test['original_index'].astype(int)
+def mos2dmos(mos, dmos):
+    def logistic_function(x, a, b, c, d):
+        return a / (1 + np.exp(-c * (x - d))) + b
+
+    def get_logistic_fun(data_tid, data_live):
+      def convert_mos_to_dmos(mos, dmos):
+          initial_params = [0, 0, 0, np.median(mos)]  # initial guess for parameters
+          popt, _ = curve_fit(logistic_function, mos, dmos, p0=initial_params, maxfev=10000)
+          return popt
     
-    meta_train.set_index('original_index', inplace=True)
-    meta_val.set_index('original_index', inplace=True)
-    meta_test.set_index('original_index', inplace=True)
-     
-    return meta_train, meta_val, meta_test
+      mos = np.sort(mos)
+      dmos = np.sort(dmos)
+      params = convert_mos_to_dmos(mos_train, dmos_train)
 
+      return logistic_function(mos)
+    
 def build_model(num_classes):
     inputs = layers.Input(shape=(32, 32, 1))
     x = layers.Conv2D(8, (3, 3), activation='relu')(inputs)
@@ -61,20 +76,47 @@ def group_results(metadata, measureName):
     return grouped
     
 def main():
-    num_classes = 26
-    data_loader = kadid10k_loader()
-    metadata = data_loader.metadata
-    measureName = data_loader.measureName
-    meta_train, meta_val, meta_test = split_data(metadata, measureName)
+    cross = True
+    if not cross:
+        data_loader = tid2013_loader()
+        num_classes = data_loader.num_classes
+        measureName = data_loader.measureName
+        metadata = data_loader.metadata
+        meta_train, meta_val, meta_test  = split_data(metadata, measureName)
 
-    X = data_loader.X
-    y_reg = data_loader.y_reg
-    y_class = data_loader.y_class
-    train_indices, val_indices, test_indices = meta_train.index, meta_val.index, meta_test.index
-    X_train, X_val, X_test = X[train_indices], X[val_indices], X[test_indices]
-    y_train_reg, y_val_reg, y_test_reg = y_reg[train_indices], y_reg[val_indices], y_reg[test_indices]
-    y_train_class, y_val_class, y_test_class = y_class[train_indices], y_class[val_indices], y_class[test_indices]
-
+        X = data_loader.X
+        y_reg = data_loader.y_reg
+        y_class = data_loader.y_class
+        
+        train_indices, val_indices, test_indices = meta_train.index, meta_val.index, meta_test.index
+        X_test =  X[test_indices]
+        y_test_reg =  y_reg[test_indices]
+        y_test_class =  y_class[test_indices]
+        
+    else:
+        training_loader = tid2013_loader()
+        test_loader = kadid10k_loader()
+        num_classes = training_loader.num_classes
+        measureName = test_loader.measureName
+        training_data = training_loader.metadata
+        test_data = test_loader.metadata
+        training_data[measureName] = mos2dmos(training_data['MOS'], test_data[measureName])
+        meta_train, meta_val = split_data(training_data, 'MOS', False)
+        meta_test = test_loader.metadata
+        
+        X = training_loader.X
+        y_reg = training_loader.y_reg
+        y_class = training_loader.y_class
+        
+        train_indices, val_indices = meta_train.index, meta_val.index
+        X_test =  test_loader.X
+        y_test_reg =  test_loader.y_reg
+        y_test_class =  test_loader.y_class
+        
+    X_train, X_val = X[train_indices], X[val_indices] 
+    y_train_reg, y_val_reg = y_reg[train_indices], y_reg[val_indices]
+    y_train_class, y_val_class = y_class[train_indices], y_class[val_indices]
+            
     model = build_model(num_classes)
     model.compile(optimizer='adam', loss=['mae', 'sparse_categorical_crossentropy'])
     model.fit(X_train, [y_train_reg,  y_train_class], epochs=1, batch_size=32, verbose=2)
@@ -87,7 +129,7 @@ def main():
     meta_test[f'pred_{measureName}'] = y_pred_reg.flatten()
     meta_test['pred_distortion'] = indices
     meta_test.to_csv('meta_test.csv')
-    results = group_results(meta_test, data_loader.measureName)
+    results = group_results(meta_test, measureName)
     results.to_csv('results.csv')
 
     print(accuracy_score(results['distortion'], results['pred_distortion']))
