@@ -4,11 +4,14 @@ import cv2
 import urllib.request
 import subprocess
 import os
+import logging
+import configparser
+
 from scipy.signal import convolve2d
 from datetime import datetime
 from sklearn.model_selection import train_test_split
-import logging
 
+### Set-up logs ###
 os.makedirs('logs', exist_ok=True)
 timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 log_file_path = os.path.join('logs',f'warnings_{timestamp}.log')
@@ -29,12 +32,31 @@ console_handler.setFormatter(console_formatter)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
+### Set-up config file ###
+def read_config(config_path, section='data_loader'):
+    '''Reads parameters from the config file'''
+    config = configparser.ConfigParser()
+    config.read(config_path)
+    if section not in config:
+        raise ValueError(f"Section '{section}' not found in the config file.")
+    
+    elif section == 'data_loader':
+        config_values = {
+            'catalogue': config.get(section, 'catalogue'),
+            'winrar': config.get(section, 'winrar'),
+            '7zip': config.get(section, '7zip'),
+        }
+    
+    return config_values
+    
+### Classes for managing downloading and preprocessing databases ###
 class database_loader:
     '''Parent class for database-specific loaders.'''
     def __init__(self):
-        self.catalogue = 'databases'
-        self.winrar = 'D:\\Programy\\WinRAR\\WinRAR.exe'
-        self.sevenzip = 'D:\\Programy\\7-Zip\\7z.exe'
+        config_parameters = read_config('config.ini', section='data_loader') 
+        self.catalogue = config_parameters['catalogue']
+        self.winrar = config_parameters['winrar']
+        self.sevenzip = config_parameters['7zip']
 
         ### Attributes to be declared within the child class ###
         self.url = ''      # URL of the dataset (if applicable)
@@ -42,8 +64,8 @@ class database_loader:
         self.measureName = ''    # MOS/DMOS column name
         self.images_dir = ''   # Directory where the images are stored
         self.archive_file = '' # Path to the rar/zip file
-        self.metadata = None
-        self.num_classes = None
+        self.metadata = None # Dataframe with filenames, mos/dmos and distortion types
+        self.num_classes = None # Number of different distortions
         
     def data_exist(self):
         '''Check if patch files are present in the directory.'''
@@ -107,6 +129,29 @@ class database_loader:
             return False 
         else: 
             return True
+            
+    def cross(self, data, mapping, as_train):
+        data['distortion_name'] = data['distortion'].map(self.distortion_mapping)
+            
+        if as_train:
+            data = data[data['distortion_name'].isin(mapping.values())]
+            reverse_dict = {v:k for k,v in mapping.items()}
+            #label_mapping = {label: index for index, label in enumerate(mapping.keys())}
+        else:
+            data = data[data['distortion_name'].isin(mapping.values())]
+            reverse_dict = {v: k for k, v in self.distortion_mapping.items()}
+            #label_mapping = {label: index for index, label in enumerate(self.distortion_mapping.keys())}
+            
+        data['distortion'] = data['distortion_name'].map(reverse_dict)
+        data = data.drop(columns=['distortion_name'])     
+
+        label_mapping = {label: index for index, label in enumerate(self.distortion_mapping.keys())}
+        label_mapping = {label: index for index, label in enumerate(np.unique(data['distortion']))}
+        data['distortion'] = data['distortion'].map(label_mapping)
+        print(data)
+        print(type(data['distortion']))
+        
+        return data    
     
     def preprocess(self, data, patch_size=32):
         total_images = len(data)
@@ -175,6 +220,8 @@ class database_loader:
         return patches, X, y_reg, y_class
                     
 # TO DO:
+# fix numClasses assgignment
+# create cross
 # filter pristine images
 # create config file
 class tid2013_loader(database_loader):
@@ -192,7 +239,8 @@ class tid2013_loader(database_loader):
                                      
         self.distortion_mapping_kadid10k = {11: 'wn', 12:'wnc', 13:'inoise', 1: 'gblur',
                                          15:'idn', 10: 'jpeg', 9: 'jp2k',
-                                         18:'meanshft', 14:'mnoise', 6:'dith_quant'}     
+                                         18:'meanshft', 14:'mnoise', 6:'dith_quant'}
+        #self.distortion_mapping_kadid10k = {1: 'gblur', 6: 'dith_quant'}
         ''' 
         self.distortion_mapping_live = {1: 'wn', 2:'wnc', 3:'scn', 4:'mn', 5:'hfn', 
                                      6:'inoise', 7:'qn', 8: 'gblur', 9:'idn', 10: 'jpeg',
@@ -223,11 +271,14 @@ class tid2013_loader(database_loader):
         data.columns = ['image', 'MOS']
         data['distortion'] = [int(img.split('_')[1]) for img in data['image']]
         if filter=='kadid10k':
+            '''
             data['distortion'] = [self.distortion_mapping[int(img.split('_')[1])] for img in data['image']]       
             data = data[data['distortion'].isin(self.distortion_mapping_kadid10k.values())]
             reverse_dict = {v:k for k,v in self.distortion_mapping_kadid10k.items() }
             data['distortion'] = data['distortion'].map(reverse_dict)
-            
+            '''
+            data = self.cross(data, self.distortion_mapping_kadid10k,  as_train=True)
+            self.num_classes = len(self.distortion_mapping_kadid10k)+1
         data = self.preprocess(data)
         return data
     
@@ -271,20 +322,16 @@ class kadid10k_loader(database_loader):
         data.columns = ['image', 'DMOS']
         data['distortion'] = [int(img.split('_')[1]) for img in data['image']]
         if filter=='tid2013':
-            # Filter the data to keep only the distortions present in `tid2013`
+            '''
             data['distortion_name'] = data['distortion'].map(self.distortion_mapping)
-            
-            # Keep only the distortions that are in `distortion_mapping_tid2013`
             data = data[data['distortion_name'].isin(self.distortion_mapping_tid2013.values())]
             
-            # Map back to the original keys in `distortion_mapping`
             reverse_dict = {v: k for k, v in self.distortion_mapping.items()}
             data['distortion'] = data['distortion_name'].map(reverse_dict)
             
-            # Drop the `distortion_name` column as it's no longer needed
             data = data.drop(columns=['distortion_name'])
-            
-            self.num_classes = len(self.distortion_mapping_tid2013) + 1
-
+            '''
+            data = self.cross(data, self.distortion_mapping_tid2013, as_train=False)    
+            self.num_classes = len(self.distortion_mapping_tid2013)+1
         data = self.preprocess(data)
         return data

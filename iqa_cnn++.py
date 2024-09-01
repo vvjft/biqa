@@ -119,7 +119,7 @@ def main():
             
     model = build_model(num_classes)
     model.compile(optimizer='adam', loss=['mae', 'sparse_categorical_crossentropy'])
-    model.fit(X_train, [y_train_reg,  y_train_class], epochs=1, batch_size=32, verbose=2)
+    model.fit(X_train, [y_train_reg,  y_train_class], epochs=10, batch_size=32, verbose=2)
 
     y_pred_reg, y_pred_class = model.predict(X_test, verbose=2)
 
