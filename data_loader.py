@@ -49,7 +49,7 @@ def read_config(config_path, section='data_loader'):
     
     return config_values
     
-### Classes for managing downloading and preprocessing databases ###
+### Classes for managing, downloading and preprocessing databases ###
 class database_loader:
     '''Parent class for database-specific loaders.'''
     def __init__(self):
@@ -78,7 +78,7 @@ class database_loader:
         Args:
             extract_in (str, optional): Provide if the dataset is not extracted into a folder named after the file
         Note:
-            You need to provide path into WinRAR or 7zip exe file.
+            You need to specify path into WinRAR or 7zip in  config.ini.
         '''
         def track_download_progress(count, block_size, total_size):
             percent = int(count * block_size * 100 / total_size)
@@ -131,26 +131,23 @@ class database_loader:
             return True
             
     def cross(self, data, mapping, as_train):
-        data['distortion_name'] = data['distortion'].map(self.distortion_mapping)
-            
+        '''
+        Prepare dataset for cross database test. 
+        as_train = True: database is treated as training set
+        as_train = False: database is treated as test set
+        '''
+        data['distortion_name'] = data['distortion'].map(self.distortion_mapping)     
         if as_train:
             data = data[data['distortion_name'].isin(mapping.values())]
             reverse_dict = {v:k for k,v in mapping.items()}
-            #label_mapping = {label: index for index, label in enumerate(mapping.keys())}
         else:
             data = data[data['distortion_name'].isin(mapping.values())]
             reverse_dict = {v: k for k, v in self.distortion_mapping.items()}
-            #label_mapping = {label: index for index, label in enumerate(self.distortion_mapping.keys())}
             
         data['distortion'] = data['distortion_name'].map(reverse_dict)
-        data = data.drop(columns=['distortion_name'])     
-
-        label_mapping = {label: index for index, label in enumerate(self.distortion_mapping.keys())}
+        data = data.drop(columns=['distortion_name'])            
         label_mapping = {label: index for index, label in enumerate(np.unique(data['distortion']))}
-        data['distortion'] = data['distortion'].map(label_mapping)
-        print(data)
-        print(type(data['distortion']))
-        
+        data['distortion'] = data['distortion'].map(label_mapping) 
         return data    
     
     def preprocess(self, data, patch_size=32):
@@ -202,7 +199,7 @@ class database_loader:
                 logging.warning(f'Failed to load image: {filename}')
             else:
                 image_normalized = normalize_image(image)
-                filename = f'NORM_{filename.lower()}'
+                filename = filename.lower()
                 slice_image(image_normalized, patch_size)
                 processed_images += 1  
                 print(f'Preprocessed {processed_images}/{total_images} images.', end='\r') 
@@ -220,10 +217,8 @@ class database_loader:
         return patches, X, y_reg, y_class
                     
 # TO DO:
-# fix numClasses assgignment
-# create cross
 # filter pristine images
-# create config file
+# rename for clarity: data, dataset
 class tid2013_loader(database_loader):
     def __init__(self):
         super().__init__()
@@ -258,8 +253,7 @@ class tid2013_loader(database_loader):
                 self.y_reg = np.load(os.path.join(self.exdir, 'y_reg.npy'))
                 self.y_class = np.load(os.path.join(self.exdir, 'y_class.npy'))        
             else:
-                self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data()                
-                            
+                self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data()                                       
             logging.info("Data loaded successfully.")
         else:
             logging.error("Cannot download or extract database.")
@@ -271,12 +265,6 @@ class tid2013_loader(database_loader):
         data.columns = ['image', 'MOS']
         data['distortion'] = [int(img.split('_')[1]) for img in data['image']]
         if filter=='kadid10k':
-            '''
-            data['distortion'] = [self.distortion_mapping[int(img.split('_')[1])] for img in data['image']]       
-            data = data[data['distortion'].isin(self.distortion_mapping_kadid10k.values())]
-            reverse_dict = {v:k for k,v in self.distortion_mapping_kadid10k.items() }
-            data['distortion'] = data['distortion'].map(reverse_dict)
-            '''
             data = self.cross(data, self.distortion_mapping_kadid10k,  as_train=True)
             self.num_classes = len(self.distortion_mapping_kadid10k)+1
         data = self.preprocess(data)
@@ -307,11 +295,9 @@ class kadid10k_loader(database_loader):
                 self.metadata = pd.read_csv(os.path.join(self.exdir, 'metadata.csv'))
                 self.X = np.load(os.path.join(self.exdir, 'X.npy'))
                 self.y_reg = np.load(os.path.join(self.exdir, 'y_reg.npy'))
-                self.y_class = np.load(os.path.join(self.exdir, 'y_class.npy'))
-                
+                self.y_class = np.load(os.path.join(self.exdir, 'y_class.npy'))            
             else:
-                self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data()                
-                            
+                self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data()                                            
             logging.info("Data loaded successfully.")
         else:
             logging.error("Cannot download or extract database.")
@@ -322,15 +308,6 @@ class kadid10k_loader(database_loader):
         data.columns = ['image', 'DMOS']
         data['distortion'] = [int(img.split('_')[1]) for img in data['image']]
         if filter=='tid2013':
-            '''
-            data['distortion_name'] = data['distortion'].map(self.distortion_mapping)
-            data = data[data['distortion_name'].isin(self.distortion_mapping_tid2013.values())]
-            
-            reverse_dict = {v: k for k, v in self.distortion_mapping.items()}
-            data['distortion'] = data['distortion_name'].map(reverse_dict)
-            
-            data = data.drop(columns=['distortion_name'])
-            '''
             data = self.cross(data, self.distortion_mapping_tid2013, as_train=False)    
             self.num_classes = len(self.distortion_mapping_tid2013)+1
         data = self.preprocess(data)
