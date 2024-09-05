@@ -6,10 +6,15 @@ import argparse
 from data_loader import tid2013_loader, kadid10k_loader
 from tensorflow.keras import layers, models
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, mean_absolute_error
 from scipy.stats import spearmanr, pearsonr, kendalltau
-from sklearn.metrics import mean_absolute_error
 from scipy.optimize import curve_fit
+
+# TO DO:
+    # save results to txt
+    # check if mapping is correct
+    # create model without classification
+    
 
 def split_data(metadata, measureName, validation=True):  
     metadata = metadata.reset_index().rename(columns={'index': 'original_index'})
@@ -63,21 +68,22 @@ def build_model(num_classes):
     classification_output = layers.Dense(num_classes, activation='softmax', name='classification')(x)
     model = models.Model(inputs=inputs, outputs=[regression_output, classification_output])
     return model
-
-def group_results(metadata, measureName):
-    metadata['prefix'] = metadata['image'].str.extract(r'(^.*_i\d+_\d+_\d+)_patch')
-
-    grouped = metadata.groupby('prefix').agg(
-        measure=(measureName, 'first'),  
-        pred_measure=(f'pred_{measureName}', 'mean'),
-        distortion=('distortion', 'first'),
-        pred_distortion = ('pred_distortion', lambda x: x.mode().iloc[0])  
-    ).reset_index()
-
-    grouped.rename(columns={'prefix': 'image', 'measure': measureName, 'pred_measure': f'pred_{measureName}'}, inplace=True)
-    return grouped
     
 def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping):
+    
+    def group_results(metadata, measureName):  
+        metadata['prefix'] = metadata['image'].str.extract(r'(i\d+_\d+_\d+)_patch')
+        
+        grouped = metadata.groupby('prefix').agg(
+            measure=(measureName, 'first'),  
+            pred_measure=(f'pred_{measureName}', 'mean'),
+            distortion=('distortion', 'first'),
+            pred_distortion = ('pred_distortion', lambda x: x.mode().iloc[0])  
+        ).reset_index()
+              
+        grouped.rename(columns={'prefix': 'image', 'measure': measureName, 'pred_measure': f'pred_{measureName}'}, inplace=True)
+        return grouped
+  
     sequential_mapping = {i: key for i, key in enumerate(sorted(distortion_mapping.keys()))}
     
     meta_test[measureName] = pd.to_numeric(meta_test[measureName], errors='coerce').astype('float32')
@@ -98,11 +104,11 @@ def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_ma
     mae = mean_absolute_error(results[measureName], results[f'pred_{measureName}'])
     
     print('All:')
-    print(f"  ACC (Accuracu): {acc}")
-    print(f"  LCC (Linear Correlation Coefficient): {lcc}")
-    print(f"  SROCC (Spearman Rank Order Correlation Coefficient): {srocc}")
-    print(f"  KRCC (Kendall Rank Correlation Coefficient): {krcc}")
-    print(f"  MAE (Mean Absolute Error): {mae}")
+    print(f'  ACC (Accuracy): {acc}')
+    print(f'  LCC (Linear Correlation Coefficient): {lcc}')
+    print(f'  SROCC (Spearman Rank Order Correlation Coefficient): {srocc}')
+    print(f'  KRCC (Kendall Rank Correlation Coefficient): {krcc}')
+    print(f'  MAE (Mean Absolute Error): {mae}')
     
     distortions = results.groupby('distortion') 
     for name, distortion in distortions:
@@ -112,12 +118,12 @@ def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_ma
         group_krcc = kendalltau(distortion[f'pred_{measureName}'], distortion[measureName])[0]
         group_mae = mean_absolute_error(distortion[measureName], distortion[f'pred_{measureName}'])
     
-        print(f"Distortion: {name}")
-        print(f"  ACC: {group_accuracy_score}")
-        print(f"  LCC: {group_lcc}")
-        print(f"  SROCC: {group_srocc}")
-        print(f"  KRCC: {group_krcc}")
-        print(f"  MAE: {group_mae}")
+        print(f'{name}')
+        print(f'  ACC: {group_accuracy_score}')
+        print(f'  LCC: {group_lcc}')
+        print(f'  SROCC: {group_srocc}')
+        print(f'  KRCC: {group_krcc}')
+        print(f'  MAE: {group_mae}')
 
 def main(training, test):
     databases = {'tid2013': tid2013_loader, 'kadid10k': kadid10k_loader}

@@ -100,12 +100,12 @@ class database_loader:
 
         def extract_in_windows(extract_in='databases'):
             try:
-                if self.archive_file.endswith('.rar'):
-                    logging.info(f"Extracting {self.archive_file} with WinRAR...")
-                    subprocess.run([self.winrar, 'x', self.archive_file, extract_in], capture_output=True, text=True)
-                else:
-                    logging.info(f"Extracting {self.archive_file} with 7-Zip...")
-                    subprocess.run([self.sevenzip, 'x', '-aoa', self.archive_file, f'-o{extract_in}'], capture_output=True, text=True)
+                #if self.archive_file.endswith('.rar'):
+                #    logging.info(f"Extracting {self.archive_file} with WinRAR...")
+                #    subprocess.run([self.winrar, 'x', self.archive_file, extract_in], capture_output=True, text=True)
+                #else:
+                logging.info(f"Extracting {self.archive_file} with 7-Zip...")
+                subprocess.run([self.sevenzip, 'x', '-aoa', self.archive_file, f'-o{extract_in}'], capture_output=True, text=True)
             except Exception as e:
                 logger.error(f"Error while exctracting: {e}")
                 return False
@@ -219,6 +219,7 @@ class database_loader:
 # TO DO:
 # filter pristine images
 # rename for clarity: data, dataset
+# set warning when not a full database is loaded (when not using cross correlation test)
 class tid2013_loader(database_loader):
     def __init__(self):
         super().__init__()
