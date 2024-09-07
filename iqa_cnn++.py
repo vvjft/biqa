@@ -72,33 +72,19 @@ def build_model(num_classes):
     return model
     
 def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping):
-<<<<<<< HEAD
     def group_results(metadata, measureName):
         metadata['prefix'] = metadata['image'].str.extract(r'(i\d+_\d+_\d+)_patch')
 
-=======
-    
-    def group_results(metadata, measureName):  
-        metadata['prefix'] = metadata['image'].str.extract(r'(i\d+_\d+_\d+)_patch')
-        
->>>>>>> ba990b2dc65e712ca96e9f9241b2f3156f8e02d9
         grouped = metadata.groupby('prefix').agg(
             measure=(measureName, 'first'),  
             pred_measure=(f'pred_{measureName}', 'mean'),
             distortion=('distortion', 'first'),
             pred_distortion = ('pred_distortion', lambda x: x.mode().iloc[0])  
         ).reset_index()
-<<<<<<< HEAD
 
         grouped.rename(columns={'prefix': 'image', 'measure': measureName, 'pred_measure': f'pred_{measureName}'}, inplace=True)
         return grouped
 
-=======
-              
-        grouped.rename(columns={'prefix': 'image', 'measure': measureName, 'pred_measure': f'pred_{measureName}'}, inplace=True)
-        return grouped
-  
->>>>>>> ba990b2dc65e712ca96e9f9241b2f3156f8e02d9
     sequential_mapping = {i: key for i, key in enumerate(sorted(distortion_mapping.keys()))}
     
     meta_test[measureName] = pd.to_numeric(meta_test[measureName], errors='coerce').astype('float32')
@@ -118,7 +104,6 @@ def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_ma
     krcc = kendalltau(results[f'pred_{measureName}'], results[measureName])[0]
     mae = mean_absolute_error(results[measureName], results[f'pred_{measureName}'])
     
-<<<<<<< HEAD
     with open('results.txt', 'w') as file:
         file.write('All:\n')
         file.write(f'  ACC (Accuracy): {acc}\n')
@@ -142,29 +127,6 @@ def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_ma
             file.write(f'  KRCC: {group_krcc}\n')
             file.write(f'  MAE: {group_mae}\n')
     print(f'Results saved to results.txt')
-=======
-    print('All:')
-    print(f'  ACC (Accuracy): {acc}')
-    print(f'  LCC (Linear Correlation Coefficient): {lcc}')
-    print(f'  SROCC (Spearman Rank Order Correlation Coefficient): {srocc}')
-    print(f'  KRCC (Kendall Rank Correlation Coefficient): {krcc}')
-    print(f'  MAE (Mean Absolute Error): {mae}')
-    
-    distortions = results.groupby('distortion') 
-    for name, distortion in distortions:
-        group_accuracy_score = accuracy_score(distortion['distortion'], distortion['pred_distortion'])
-        group_lcc = pearsonr(distortion[f'pred_{measureName}'], distortion[measureName])[0]
-        group_srocc = spearmanr(distortion[f'pred_{measureName}'], distortion[measureName])[0]
-        group_krcc = kendalltau(distortion[f'pred_{measureName}'], distortion[measureName])[0]
-        group_mae = mean_absolute_error(distortion[measureName], distortion[f'pred_{measureName}'])
-    
-        print(f'{name}')
-        print(f'  ACC: {group_accuracy_score}')
-        print(f'  LCC: {group_lcc}')
-        print(f'  SROCC: {group_srocc}')
-        print(f'  KRCC: {group_krcc}')
-        print(f'  MAE: {group_mae}')
->>>>>>> ba990b2dc65e712ca96e9f9241b2f3156f8e02d9
 
 def main(training, test):
     databases = {'tid2013': tid2013_loader, 'kadid10k': kadid10k_loader}
