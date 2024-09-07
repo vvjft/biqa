@@ -9,7 +9,6 @@ import configparser
 
 from scipy.signal import convolve2d
 from datetime import datetime
-from sklearn.model_selection import train_test_split
 
 ### Set-up logs ###
 os.makedirs('logs', exist_ok=True)
@@ -58,7 +57,7 @@ class database_loader:
         self.winrar = config_parameters['winrar']
         self.sevenzip = config_parameters['7zip']
 
-        ### Attributes to be declared within the child class ###
+        ## Attributes to be declared within the child class ##
         self.url = ''      # URL of the dataset (if applicable)
         self.exdir = ''    # Directory where the exctracted dataset is stored
         self.measureName = ''    # MOS/DMOS column name
@@ -100,12 +99,22 @@ class database_loader:
 
         def extract_in_windows(extract_in='databases'):
             try:
+<<<<<<< HEAD
+
+                logging.info(f"Extracting {self.archive_file} with 7-Zip...")
+                result = subprocess.run([self.sevenzip, 'x', '-aoa', self.archive_file, f'-o{extract_in}'], capture_output=True, text=True)
+                if result.returncode != 0:
+                    logging.info(f"Extracting {self.archive_file} with WinRAR...")
+                    subprocess.run([self.winrar, 'x', self.archive_file, extract_in], capture_output=True, text=True)
+
+=======
                 #if self.archive_file.endswith('.rar'):
                 #    logging.info(f"Extracting {self.archive_file} with WinRAR...")
                 #    subprocess.run([self.winrar, 'x', self.archive_file, extract_in], capture_output=True, text=True)
                 #else:
                 logging.info(f"Extracting {self.archive_file} with 7-Zip...")
                 subprocess.run([self.sevenzip, 'x', '-aoa', self.archive_file, f'-o{extract_in}'], capture_output=True, text=True)
+>>>>>>> ba990b2dc65e712ca96e9f9241b2f3156f8e02d9
             except Exception as e:
                 logger.error(f"Error while exctracting: {e}")
                 return False
@@ -150,8 +159,8 @@ class database_loader:
         data['distortion'] = data['distortion'].map(label_mapping) 
         return data    
     
-    def preprocess(self, data, patch_size=32):
-        total_images = len(data)
+    def preprocess(self, database, patch_size=32):
+        total_images = len(database)
         processed_images = 0
         logging.info('Preprocessing images...')
 
@@ -186,7 +195,7 @@ class database_loader:
         X = []
         y_reg = []
         y_class= []
-        for idx, row in data.iterrows():
+        for idx, row in database.iterrows():
             filename = row['image']
             score = row[self.measureName]
             distortion = row['distortion']
@@ -218,10 +227,14 @@ class database_loader:
                     
 # TO DO:
 # filter pristine images
+<<<<<<< HEAD
+# refine logger
+=======
 # rename for clarity: data, dataset
 # set warning when not a full database is loaded (when not using cross correlation test)
+>>>>>>> ba990b2dc65e712ca96e9f9241b2f3156f8e02d9
 class tid2013_loader(database_loader):
-    def __init__(self):
+    def __init__(self, filter):
         super().__init__()
         self.url = 'https://www.ponomarenko.info/tid2013/tid2013.rar'
         self.exdir = os.path.join(self.catalogue, 'tid2013')
@@ -236,43 +249,47 @@ class tid2013_loader(database_loader):
         self.distortion_mapping_kadid10k = {11: 'wn', 12:'wnc', 13:'inoise', 1: 'gblur',
                                          15:'idn', 10: 'jpeg', 9: 'jp2k',
                                          18:'meanshft', 14:'mnoise', 6:'dith_quant'}
-        #self.distortion_mapping_kadid10k = {1: 'gblur', 6: 'dith_quant'}
-        ''' 
-        self.distortion_mapping_live = {1: 'wn', 2:'wnc', 3:'scn', 4:'mn', 5:'hfn', 
-                                     6:'inoise', 7:'qn', 8: 'gblur', 9:'idn', 10: 'jpeg',
-                                     11: 'jp2k', 12:'jpegte', 13:'jp2kte'}
-        '''                              
+            
+        #self.distortion_mapping_live = {1: 'wn', 2:'wnc', 3:'scn', 4:'mn', 5:'hfn', 
+        #                             6:'inoise', 7:'qn', 8: 'gblur', 9:'idn', 10: 'jpeg',
+        #                             11: 'jp2k', 12:'jpegte', 13:'jp2kte'}
+                                      
         self.num_classes = len(self.distortion_mapping)+1                                   
-
+        self.num_patches = {'tid2013': 576000, 'kadid10k': 240000}
         os.makedirs(self.exdir, exist_ok=True)
-    
-        if self.download(extract_in = self.exdir):
-            if self.data_exist():
-                logger.info("Loading data...")
-                self.metadata = pd.read_csv(os.path.join(self.exdir, 'metadata.csv'))
+
+        if not self.download(extract_in=self.exdir):
+            logging.error("Failed to download or extract the database.")
+            return
+
+        if self.data_exist():
+            logger.info("Loading data...")
+            self.metadata = pd.read_csv(os.path.join(self.exdir, 'metadata.csv'))
+            if len(self.metadata) != self.num_patches[filter]:
+                logger.warning("Mismatch in data size. Re-preprocessing...")
+                self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data(filter)               
+            else:
                 self.X = np.load(os.path.join(self.exdir, 'X.npy'))
                 self.y_reg = np.load(os.path.join(self.exdir, 'y_reg.npy'))
                 self.y_class = np.load(os.path.join(self.exdir, 'y_class.npy'))        
-            else:
-                self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data()                                       
-            logging.info("Data loaded successfully.")
         else:
-            logging.error("Cannot download or extract database.")
-            
-    def prepare_data(self, filter = 'kadid10k'):
+            self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data(filter)
+        logger.info("TID2013 loaded successfully.")                                       
+        
+    def prepare_data(self, filter):
         data_path = os.path.join(self.exdir, 'mos_with_names.txt')
-        data = pd.read_csv(data_path, header=None, delimiter=' ')
-        data = data.iloc[:, [1, 0]]  # swap column order
-        data.columns = ['image', 'MOS']
-        data['distortion'] = [int(img.split('_')[1]) for img in data['image']]
+        database = pd.read_csv(data_path, header=None, delimiter=' ')
+        database = database.iloc[:, [1, 0]]  # swap column order
+        database.columns = ['image', 'MOS']
+        database['distortion'] = [int(img.split('_')[1]) for img in database['image']]
         if filter=='kadid10k':
-            data = self.cross(data, self.distortion_mapping_kadid10k,  as_train=True)
+            database = self.cross(database, self.distortion_mapping_kadid10k,  as_train=True)
             self.num_classes = len(self.distortion_mapping_kadid10k)+1
-        data = self.preprocess(data)
-        return data
+        database = self.preprocess(database)
+        return database
     
 class kadid10k_loader(database_loader): 
-    def __init__(self):
+    def __init__(self, filter):
         super().__init__()
         self.url = 'https://datasets.vqa.mmsp-kn.de/archives/kadid10k.zip'
         self.exdir = os.path.join(self.catalogue, 'kadid10k')
@@ -289,27 +306,32 @@ class kadid10k_loader(database_loader):
                                         2: 'wnc', 9: 'idn', 6: 'inoise', 19:'mnoise', 16:'meanshft'} 
                                                                           
         self.num_classes = len(self.distortion_mapping)+1                                                                     
-            
-        if self.download():
-            if self.data_exist():
-                logger.info("Loading data...")
-                self.metadata = pd.read_csv(os.path.join(self.exdir, 'metadata.csv'))
+        self.num_images = {'tid2013': 777600, 'kadid10k': 1944000}   
+        if not self.download():
+            logging.error("Failed to download or extract the database.")
+            return
+
+        if self.data_exist():
+            logger.info("Loading data...")
+            self.metadata = pd.read_csv(os.path.join(self.exdir, 'metadata.csv'))
+            if len(self.metadata) != self.num_images[filter]:
+                logging.warning("Mismatch in data size. Re-preprocessing...")
+                self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data(filter)               
+            else:
                 self.X = np.load(os.path.join(self.exdir, 'X.npy'))
                 self.y_reg = np.load(os.path.join(self.exdir, 'y_reg.npy'))
-                self.y_class = np.load(os.path.join(self.exdir, 'y_class.npy'))            
-            else:
-                self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data()                                            
-            logging.info("Data loaded successfully.")
+                self.y_class = np.load(os.path.join(self.exdir, 'y_class.npy'))        
         else:
-            logging.error("Cannot download or extract database.")
+            self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data(filter)
+        logger.info("KADID-10k loaded successfully.")        
 
-    def prepare_data(self, filter='tid2013'):
-        data_path = os.path.join(self.exdir, 'dmos.csv')
-        data = pd.read_csv(data_path, header=0, usecols=[0, 2])
-        data.columns = ['image', 'DMOS']
-        data['distortion'] = [int(img.split('_')[1]) for img in data['image']]
+    def prepare_data(self, filter):
+        database_path = os.path.join(self.exdir, 'dmos.csv')
+        database = pd.read_csv(database_path, header=0, usecols=[0, 2])
+        database.columns = ['image', 'DMOS']
+        database['distortion'] = [int(img.split('_')[1]) for img in database['image']]
         if filter=='tid2013':
-            data = self.cross(data, self.distortion_mapping_tid2013, as_train=False)    
+            database = self.cross(database, self.distortion_mapping_tid2013, as_train=False)    
             self.num_classes = len(self.distortion_mapping_tid2013)+1
-        data = self.preprocess(data)
-        return data
+        database = self.preprocess(database)
+        return database

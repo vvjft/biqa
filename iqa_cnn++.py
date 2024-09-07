@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
-import os
 import argparse
+import os
 
 from data_loader import tid2013_loader, kadid10k_loader
 from tensorflow.keras import layers, models
@@ -22,11 +22,11 @@ def split_data(metadata, measureName, validation=True):
     metadata['original_index'] = metadata['original_index'].astype(int)
     
     groups = metadata.groupby('image_id').agg(list).reset_index()
-    train, test = train_test_split(groups, test_size=0.2, random_state=40)
+    train, test = train_test_split(groups, test_size=0.2, stratify=groups['distortion'], random_state=42)
     meta_sets = []
     
     if validation:
-        train, val = train_test_split(train, test_size=0.25, random_state=40)
+        train, val = train_test_split(train, test_size=0.25, stratify=train['distortion'], random_state=42)
         datasets = [train, val, test]
     else:
         datasets = [train, test]
@@ -48,8 +48,10 @@ def mos2dmos(mos, dmos):
         return a / (1 + np.exp(-c * (x - d))) + b
 
     initial_params = [0, 0, 0, np.median(mos)]
-    mos = np.sort(mos)
-    dmos = np.random.choice(np.sort(dmos), size = len(mos), replace = False)
+    if len(mos) > len(dmos):
+        dmos = np.random.choice(mos, size=len(mos), replace=False)
+    else:
+        dmos = np.random.choice(np.sort(dmos), size=len(mos), replace=False)
     params, _ = curve_fit(logistic_function, mos, dmos, p0=initial_params, maxfev=10000)
 
     return logistic_function(mos, *params)
@@ -70,20 +72,33 @@ def build_model(num_classes):
     return model
     
 def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping):
+<<<<<<< HEAD
+    def group_results(metadata, measureName):
+        metadata['prefix'] = metadata['image'].str.extract(r'(i\d+_\d+_\d+)_patch')
+
+=======
     
     def group_results(metadata, measureName):  
         metadata['prefix'] = metadata['image'].str.extract(r'(i\d+_\d+_\d+)_patch')
         
+>>>>>>> ba990b2dc65e712ca96e9f9241b2f3156f8e02d9
         grouped = metadata.groupby('prefix').agg(
             measure=(measureName, 'first'),  
             pred_measure=(f'pred_{measureName}', 'mean'),
             distortion=('distortion', 'first'),
             pred_distortion = ('pred_distortion', lambda x: x.mode().iloc[0])  
         ).reset_index()
+<<<<<<< HEAD
+
+        grouped.rename(columns={'prefix': 'image', 'measure': measureName, 'pred_measure': f'pred_{measureName}'}, inplace=True)
+        return grouped
+
+=======
               
         grouped.rename(columns={'prefix': 'image', 'measure': measureName, 'pred_measure': f'pred_{measureName}'}, inplace=True)
         return grouped
   
+>>>>>>> ba990b2dc65e712ca96e9f9241b2f3156f8e02d9
     sequential_mapping = {i: key for i, key in enumerate(sorted(distortion_mapping.keys()))}
     
     meta_test[measureName] = pd.to_numeric(meta_test[measureName], errors='coerce').astype('float32')
@@ -103,6 +118,31 @@ def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_ma
     krcc = kendalltau(results[f'pred_{measureName}'], results[measureName])[0]
     mae = mean_absolute_error(results[measureName], results[f'pred_{measureName}'])
     
+<<<<<<< HEAD
+    with open('results.txt', 'w') as file:
+        file.write('All:\n')
+        file.write(f'  ACC (Accuracy): {acc}\n')
+        file.write(f'  LCC (Linear Correlation Coefficient): {lcc}\n')
+        file.write(f'  SROCC (Spearman Rank Order Correlation Coefficient): {srocc}\n')
+        file.write(f'  KRCC (Kendall Rank Correlation Coefficient): {krcc}\n')
+        file.write(f'  MAE (Mean Absolute Error): {mae}\n')
+        
+        distortions = results.groupby('distortion') 
+        for name, distortion in distortions:
+            group_accuracy_score = accuracy_score(distortion['distortion'], distortion['pred_distortion'])
+            group_lcc = pearsonr(distortion[f'pred_{measureName}'], distortion[measureName])[0]
+            group_srocc = spearmanr(distortion[f'pred_{measureName}'], distortion[measureName])[0]
+            group_krcc = kendalltau(distortion[f'pred_{measureName}'], distortion[measureName])[0]
+            group_mae = mean_absolute_error(distortion[measureName], distortion[f'pred_{measureName}'])
+        
+            file.write(f'{name}:\n')
+            file.write(f'  ACC: {group_accuracy_score}\n')
+            file.write(f'  LCC: {group_lcc}\n')
+            file.write(f'  SROCC: {group_srocc}\n')
+            file.write(f'  KRCC: {group_krcc}\n')
+            file.write(f'  MAE: {group_mae}\n')
+    print(f'Results saved to results.txt')
+=======
     print('All:')
     print(f'  ACC (Accuracy): {acc}')
     print(f'  LCC (Linear Correlation Coefficient): {lcc}')
@@ -124,19 +164,21 @@ def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_ma
         print(f'  SROCC: {group_srocc}')
         print(f'  KRCC: {group_krcc}')
         print(f'  MAE: {group_mae}')
+>>>>>>> ba990b2dc65e712ca96e9f9241b2f3156f8e02d9
 
 def main(training, test):
     databases = {'tid2013': tid2013_loader, 'kadid10k': kadid10k_loader}
     
-    training_loader = databases[training]()
+    training_loader = databases[training](test)
     num_classes = training_loader.num_classes
     training_data = training_loader.metadata
     X = training_loader.X
     y_reg = training_loader.y_reg
     y_class = training_loader.y_class
     
-    if test is None or test==training:
+    if test==training:
         measureName = training_loader.measureName
+        distortion_mapping = training_loader.distortion_mapping
         meta_train, meta_val, meta_test  = split_data(training_data, measureName)
    
         train_indices, val_indices, test_indices = meta_train.index, meta_val.index, meta_test.index
@@ -144,12 +186,15 @@ def main(training, test):
         y_test_reg =  y_reg[test_indices]
         y_test_class =  y_class[test_indices]        
     else:
-        test_loader = databases[test]()
+        test_loader = databases[test](training)
         test_data = test_loader.metadata
-        measureName = test_loader.measureName
+        test_measureName = test_loader.measureName
+        training_measureName = training_loader.measureName
+        measureName = test_measureName
+        distortion_mapping = getattr(training_loader, f'distortion_mapping_{test}')
         
-        training_data[measureName] = mos2dmos(training_data['MOS'], test_data[measureName])
-        meta_train, meta_val = split_data(training_data, 'MOS', False)
+        training_data[training_measureName] = mos2dmos(training_data[training_measureName], test_data[test_measureName])
+        meta_train, meta_val = split_data(training_data, training_measureName, False)
         meta_test = test_loader.metadata
         train_indices, val_indices = meta_train.index, meta_val.index
         
@@ -166,16 +211,22 @@ def main(training, test):
     model.fit(X_train, [y_train_reg,  y_train_class], epochs=1, batch_size=32, verbose=2)
 
     y_pred_reg, y_pred_class = model.predict(X_test, verbose=2)
-    distortion_mapping = training_loader.distortion_mapping_kadid10k
     show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping)
 
 if __name__ == "__main__":
+    import tensorflow as tf
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+
     parser = argparse.ArgumentParser(description='Description to be filled')
     choices = ['tid2013', 'kadid10k']
     
     parser.add_argument('--training', choices=choices, type=str, default='tid2013', help='Database for training set (default: tid2013)')
-    parser.add_argument('--test', choices=choices, type=str, help='Database for test set. If not specified. Evaluation is done on trainig set.')
+    parser.add_argument('--test', choices=choices, type=str, help='Database for test set. If not specified - evaluation is done on trainig set.')
     args = parser.parse_args()
-
+    if args.test == None:
+        args.test = args.training
     main(args.training, args.test)
 
