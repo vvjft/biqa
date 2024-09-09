@@ -130,7 +130,7 @@ class database_loader:
         else: 
             return True
             
-    def cross(self, data, mapping, as_train):
+    def cross0(self, data, mapping, as_train):
         '''
         Prepare dataset for cross database test. 
         as_train = True: database is treated as training set
@@ -148,7 +148,34 @@ class database_loader:
         data = data.drop(columns=['distortion_name'])            
         label_mapping = {label: index for index, label in enumerate(np.unique(data['distortion']))}
         data['distortion'] = data['distortion'].map(label_mapping) 
-        return data    
+        return data
+
+    def cross(self, metadata, X, mapping, cross_mapping, as_training):
+        filter_values = set(cross_mapping.values())
+        distortion_dict = {key: value for key, value in mapping.items() if value in filter_values}
+
+        # filter distortions
+        indices = metadata[self.metadata['distortion'].isin(distortion_dict.keys())].index 
+        metadata = metadata.loc[indices, :]
+        X =  X[indices].copy()  
+        metadata.reset_index(drop=True, inplace=True)
+
+        if as_training:
+            # map labels to kadid
+            value_to_label = {v: k for k, v in cross_mapping.items()} # test value: test label
+            label_to_label = {k: value_to_label[v] for k, v in mapping.items() if v in value_to_label} # training label: test label
+            metadata['distortion'] = metadata['distortion'].map(label_to_label)
+
+        # sequantialize labels
+        label_mapping = {label: index for index, label in enumerate(np.unique(metadata['distortion']))}
+        metadata['distortion'] = metadata['distortion'].map(label_mapping)
+
+        # update y_reg, y_class, num_classes
+        #y_reg = np.array(metadata[self.measureName], dtype=np.float32)  
+        #y_class = np.array(metadata['distortion'], dtype=np.int64)
+        #num_classes = len(cross_mapping)+1    
+
+        return metadata, X
     
     def preprocess(self, database, patch_size=32):
         total_images = len(database)
@@ -219,6 +246,8 @@ class database_loader:
 # TO DO:
 # filter pristine images
 # refine logger
+# SettingWithCopyWarning pandas
+
 class tid2013_loader(database_loader):
     def __init__(self, filter):
         super().__init__()
@@ -251,13 +280,44 @@ class tid2013_loader(database_loader):
         if self.data_exist():
             logger.info("Loading data...")
             self.metadata = pd.read_csv(os.path.join(self.exdir, 'metadata.csv'))
-            if len(self.metadata) != self.num_patches[filter]:
-                logger.warning("Mismatch in data size. Re-preprocessing...")
-                self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data(filter)               
+            self.X = np.load(os.path.join(self.exdir, 'X.npy'))
+            self.y_reg = np.load(os.path.join(self.exdir, 'y_reg.npy'))
+            self.y_class = np.load(os.path.join(self.exdir, 'y_class.npy')) 
+
+            if (filter != None) and (filter != 'tid2013'):             
+                '''
+                filter_values = set(self.distortion_mapping_kadid10k.values())
+                distortion_dict = {key: value for key, value in self.distortion_mapping.items() if value in filter_values}
+
+                mapping = {v: k for k, v in self.distortion_mapping_kadid10k.items()}
+                reverse_mapping = {k: mapping[v] for k, v in self.distortion_mapping.items() if v in mapping}
+
+                # filter distortions
+                indices = self.metadata[self.metadata['distortion'].isin(distortion_dict.keys())].index 
+                self.metadata = self.metadata.loc[indices, :]
+                self.X =  self.X[indices].copy()  
+                self.metadata.reset_index(drop=True, inplace=True)
+
+                # map labels to kadid
+                self.metadata['distortion'] = self.metadata['distortion'].map(reverse_mapping)
+
+                # sequantialize labels
+                label_mapping = {label: index for index, label in enumerate(np.unique(self.metadata['distortion']))}
+                self.metadata['distortion'] = self.metadata['distortion'].map(label_mapping)
+
+                # update y_reg, y_class, num_classes
+                self.metadata.to_csv(os.path.join(self.exdir, 'metadata_for_kadid.csv'), index=False)
+                self.y_reg = np.array(self.metadata[self.measureName], dtype=np.float32)  
+                self.y_class = np.array(self.metadata['distortion'], dtype=np.int64)
+                self.num_classes = len(self.distortion_mapping_kadid10k)+1
+                '''
+                self.metadata, self.X = self.cross(self.metadata, self.X, self.distortion_mapping, self.distortion_mapping_kadid10k, as_training=True)
+                self.y_reg = np.array(self.metadata[self.measureName], dtype=np.float32)  
+                self.y_class = np.array(self.metadata['distortion'], dtype=np.int64)
+                self.num_classes = len(self.distortion_mapping_kadid10k)+1
+
             else:
-                self.X = np.load(os.path.join(self.exdir, 'X.npy'))
-                self.y_reg = np.load(os.path.join(self.exdir, 'y_reg.npy'))
-                self.y_class = np.load(os.path.join(self.exdir, 'y_class.npy'))        
+                logging.error("Error parsing database.")                  
         else:
             self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data(filter)
         logger.info("TID2013 loaded successfully.")                                       
@@ -300,9 +360,15 @@ class kadid10k_loader(database_loader):
         if self.data_exist():
             logger.info("Loading data...")
             self.metadata = pd.read_csv(os.path.join(self.exdir, 'metadata.csv'))
-            if len(self.metadata) != self.num_images[filter]:
-                logging.warning("Mismatch in data size. Re-preprocessing...")
-                self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data(filter)               
+            self.X = np.load(os.path.join(self.exdir, 'X.npy'))
+            #if len(self.metadata) != self.num_images[filter]:
+            #    logging.warning("Mismatch in data size. Re-preprocessing...")
+            #    self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data(filter)
+            if (filter != None) and (filter != 'kadid10k'):             
+                self.metadata, self.X = self.cross(self.metadata, self.X, self.distortion_mapping, self.distortion_mapping_tid2013, as_training=False)
+                self.y_reg = np.array(self.metadata[self.measureName], dtype=np.float32)  
+                self.y_class = np.array(self.metadata['distortion'], dtype=np.int64)
+                self.num_classes = len(self.distortion_mapping_tid2013)+1               
             else:
                 self.X = np.load(os.path.join(self.exdir, 'X.npy'))
                 self.y_reg = np.load(os.path.join(self.exdir, 'y_reg.npy'))

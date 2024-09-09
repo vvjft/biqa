@@ -142,7 +142,6 @@ def main(training, test):
         measureName = training_loader.measureName
         distortion_mapping = training_loader.distortion_mapping
         meta_train, meta_val, meta_test  = split_data(training_data, measureName)
-   
         train_indices, val_indices, test_indices = meta_train.index, meta_val.index, meta_test.index
         X_test =  X[test_indices]
         y_test_reg =  y_reg[test_indices]
@@ -156,7 +155,8 @@ def main(training, test):
         distortion_mapping = getattr(training_loader, f'distortion_mapping_{test}')
         
         training_data[training_measureName] = mos2dmos(training_data[training_measureName], test_data[test_measureName])
-        meta_train, meta_val = split_data(training_data, training_measureName, False)
+        meta_train, meta_val = split_data(training_data, training_measureName, validation=False)
+        meta_train.to_csv('meta_train.csv')
         meta_test = test_loader.metadata
         train_indices, val_indices = meta_train.index, meta_val.index
         
