@@ -9,3 +9,4 @@ test.py
 logs/
 *.csv
 config.ini
+*.txt

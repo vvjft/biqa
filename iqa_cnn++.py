@@ -70,6 +70,20 @@ def build_model(num_classes):
     classification_output = layers.Dense(num_classes, activation='softmax', name='classification')(x)
     model = models.Model(inputs=inputs, outputs=[regression_output, classification_output])
     return model
+
+def build_model2(): # no classification
+    model = models.Sequential([
+        layers.Input(shape=(32, 32, 1)),
+        layers.Conv2D(8, (3, 3), activation='relu'),
+        layers.MaxPooling2D((2, 2)),
+        layers.Conv2D(32, (3, 3), activation='relu'),
+        layers.MaxPooling2D((2, 2)),
+        layers.Flatten(),
+        layers.Dense(128, activation='relu'),
+        layers.Dense(512, activation='relu'),
+        layers.Dense(1, activation='linear')
+    ])
+    return model
     
 def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping):
     def group_results(metadata, measureName):
@@ -128,10 +142,46 @@ def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_ma
             file.write(f'  MAE: {group_mae}\n')
     print(f'Results saved to results.txt')
 
+
+
+def show_results2(meta_test, y_pred_reg, measureName):
+    def group_results(metadata, measureName):
+        metadata['prefix'] = metadata['image'].str.extract(r'(i\d+_\d+_\d+)_patch')
+
+        grouped = metadata.groupby('prefix').agg(
+            measure=(measureName, 'first'),  
+            pred_measure=(f'pred_{measureName}', 'mean') 
+        ).reset_index()
+
+        grouped.rename(columns={'prefix': 'image', 'measure': measureName, 'pred_measure': f'pred_{measureName}'}, inplace=True)
+        return grouped
+    
+    meta_test[measureName] = pd.to_numeric(meta_test[measureName], errors='coerce').astype('float32')
+    meta_test[f'pred_{measureName}'] = y_pred_reg.flatten()
+    meta_test.to_csv('meta_test.csv')
+    results = group_results(meta_test, measureName)
+    results.to_csv('results.csv')
+
+    
+    lcc = pearsonr(results[f'pred_{measureName}'], results[measureName])[0]
+    srocc = spearmanr(results[f'pred_{measureName}'], results[measureName])[0]
+    krcc = kendalltau(results[f'pred_{measureName}'], results[measureName])[0]
+    mae = mean_absolute_error(results[measureName], results[f'pred_{measureName}'])
+    
+    with open('results.txt', 'w') as file:
+        file.write('All:\n')
+        file.write(f'  LCC (Linear Correlation Coefficient): {lcc}\n')
+        file.write(f'  SROCC (Spearman Rank Order Correlation Coefficient): {srocc}\n')
+        file.write(f'  KRCC (Kendall Rank Correlation Coefficient): {krcc}\n')
+        file.write(f'  MAE (Mean Absolute Error): {mae}\n')
+        
+    print(f'Results saved to results.txt')
+
 def main(training, test):
     databases = {'tid2013': tid2013_loader, 'kadid10k': kadid10k_loader}
     
-    training_loader = databases[training](test)
+    #training_loader = databases[training](test, as_training=True)
+    training_loader = databases[training](training, as_training=False)
     num_classes = training_loader.num_classes
     training_data = training_loader.metadata
     X = training_loader.X
@@ -168,12 +218,18 @@ def main(training, test):
     y_train_reg, y_val_reg = y_reg[train_indices], y_reg[val_indices]
     y_train_class, y_val_class = y_class[train_indices], y_class[val_indices]
             
-    model = build_model(num_classes)
-    model.compile(optimizer='adam', loss=['mae', 'sparse_categorical_crossentropy'])
-    model.fit(X_train, [y_train_reg,  y_train_class], epochs=1, batch_size=32, verbose=2)
+    #model = build_model(num_classes)
+    #model.compile(optimizer='adam', loss=['mae', 'sparse_categorical_crossentropy'])
+    #model.fit(X_train, [y_train_reg,  y_train_class], epochs=1, batch_size=32, verbose=2)
 
-    y_pred_reg, y_pred_class = model.predict(X_test, verbose=2)
-    show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping)
+    model = build_model2()
+    model.compile(optimizer='adam', loss='mean_absolute_error')
+    model.fit(X_train, y_train_reg, epochs=1, batch_size=32, verbose=2)
+
+    #y_pred_reg, y_pred_class = model.predict(X_test, verbose=2)
+    y_pred_reg = model.predict(X_test, verbose=2)
+    #show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping)
+    show_results2(meta_test, y_pred_reg,  measureName)
 
 if __name__ == "__main__":
     import tensorflow as tf
