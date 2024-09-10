@@ -12,6 +12,7 @@ from scipy.optimize import curve_fit
 
 # TO DO:
     # verify mos2dmos mapping
+    # refine sequentializing labels
     
 def split_data(metadata, measureName, validation=True):  
     metadata = metadata.reset_index().rename(columns={'index': 'original_index'})
@@ -82,7 +83,7 @@ def build_model2(): # no classification
     ])
     return model
     
-def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping, classify=True):
+def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping, single, classify=True):
     def group_results(metadata, measureName):
         metadata['prefix'] = metadata['image'].str.extract(r'(i\d+_\d+_\d+)_patch')
 
@@ -96,7 +97,13 @@ def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_ma
         grouped.rename(columns={'prefix': 'image', 'measure': measureName, 'pred_measure': f'pred_{measureName}'}, inplace=True)
         return grouped
 
-    sequential_mapping = {i: key for i, key in enumerate(sorted(distortion_mapping.keys()))}
+    
+    if single:
+        # when single database is tested, distortion labels start from 1
+        sequential_mapping = {i+1: key for i, key in enumerate(sorted(distortion_mapping.keys()))}
+    else:
+        # when performing cross databse test, we sequentialize labels (starting from 0)
+        sequential_mapping = {i: key for i, key in enumerate(sorted(distortion_mapping.keys()))}
     
     meta_test[measureName] = pd.to_numeric(meta_test[measureName], errors='coerce').astype('float32')
     meta_test[f'pred_{measureName}'] = y_pred_reg.flatten()
@@ -107,7 +114,6 @@ def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_ma
         meta_test['pred_distortion'] = indices
         meta_test['distortion'] = meta_test['distortion'].map(sequential_mapping).map(distortion_mapping)
         meta_test['pred_distortion'] = meta_test['pred_distortion'].map(sequential_mapping).map(distortion_mapping)
-    #meta_test.to_csv('meta_test.csv')
     results = group_results(meta_test, measureName)
     results.to_csv('results.csv')
 
@@ -121,7 +127,7 @@ def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_ma
     with open('results.txt', 'w') as file:
         file.write('All:\n')
         
-        file.write(f'  LCC (Linear Correlation Coefficient): {lcc}\n')
+        file.write(f'  PLCC (Linear Correlation Coefficient): {lcc}\n')
         file.write(f'  SROCC (Spearman Rank Order Correlation Coefficient): {srocc}\n')
         file.write(f'  KRCC (Kendall Rank Correlation Coefficient): {krcc}\n')
         file.write(f'  MAE (Mean Absolute Error): {mae}\n')
@@ -138,7 +144,7 @@ def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_ma
             
                 file.write(f'{name}:\n')
                 file.write(f'  ACC: {group_accuracy_score}\n')
-                file.write(f'  LCC: {group_lcc}\n')
+                file.write(f'  PLCC: {group_lcc}\n')
                 file.write(f'  SROCC: {group_srocc}\n')
                 file.write(f'  KRCC: {group_krcc}\n')
                 file.write(f'  MAE: {group_mae}\n')
@@ -147,7 +153,6 @@ def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_ma
 def main(training, test, epochs, classify=True):
     databases = {'tid2013': tid2013_loader, 'kadid10k': kadid10k_loader}
     training_loader = databases[training](test, as_training=True)
-    #training_loader = databases[training](training, as_training=False)
     num_classes = training_loader.num_classes
     training_data = training_loader.metadata
     X = training_loader.X
@@ -161,7 +166,9 @@ def main(training, test, epochs, classify=True):
         train_indices, val_indices, test_indices = meta_train.index, meta_val.index, meta_test.index
         X_test =  X[test_indices]
         y_test_reg =  y_reg[test_indices]
-        y_test_class =  y_class[test_indices]        
+        y_test_class =  y_class[test_indices]
+        
+        single = True        
     else:
         test_loader = databases[test](training)
         test_data = test_loader.metadata
@@ -172,13 +179,14 @@ def main(training, test, epochs, classify=True):
         
         training_data[training_measureName] = mos2dmos(training_data[training_measureName], test_data[test_measureName])
         meta_train, meta_val = split_data(training_data, training_measureName, validation=False)
-        #meta_train.to_csv('meta_train.csv')
         meta_test = test_loader.metadata
         train_indices, val_indices = meta_train.index, meta_val.index
         
         X_test =  test_loader.X
         y_test_reg =  test_loader.y_reg
         y_test_class =  test_loader.y_class
+
+        single = False
            
     X_train, X_val = X[train_indices], X[val_indices] 
     y_train_reg, y_val_reg = y_reg[train_indices], y_reg[val_indices]
@@ -196,8 +204,7 @@ def main(training, test, epochs, classify=True):
         y_pred_reg = model.predict(X_test, verbose=2)
         y_pred_class = None
   
-    show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping, classify)
-    #show_results2(meta_test, y_pred_reg,  measureName)
+    show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping, single, classify)
 
 if __name__ == "__main__":
     import tensorflow as tf

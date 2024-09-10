@@ -8,27 +8,18 @@ import logging
 import configparser
 
 from scipy.signal import convolve2d
-from datetime import datetime
 
 ### Set-up logs ###
-os.makedirs('logs', exist_ok=True)
-timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-log_file_path = os.path.join('logs',f'warnings_{timestamp}.log')
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 if logger.hasHandlers():
     logger.handlers.clear() 
-file_handler = logging.FileHandler(log_file_path)
-file_handler.setLevel(logging.WARNING)  
-file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-file_handler.setFormatter(file_formatter)
 
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)  
 console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 console_handler.setFormatter(console_formatter)
 
-logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
 ### Set-up config file ###
@@ -58,12 +49,12 @@ class database_loader:
         self.sevenzip = config_parameters['7zip']
 
         ## Attributes to be declared within the child class ##
-        self.url = ''      # URL of the dataset (if applicable)
-        self.exdir = ''    # Directory where the exctracted dataset is stored
-        self.measureName = ''    # MOS/DMOS column name
-        self.images_dir = ''   # Directory where the images are stored
-        self.archive_file = '' # Path to the rar/zip file
-        self.metadata = None # Dataframe with filenames, mos/dmos and distortion types
+        self.url = ''           # URL of the dataset (if applicable)
+        self.exdir = ''         # Directory where the exctracted dataset is stored
+        self.measureName = ''   # MOS/DMOS column name
+        self.images_dir = ''    # Directory where the images are stored
+        self.archive_file = ''  # Path to the rar/zip file
+        self.metadata = None    # Dataframe with filenames, mos/dmos and distortion types
         self.num_classes = None # Number of different distortions
         
     def data_exist(self):
@@ -91,7 +82,7 @@ class database_loader:
                 else:
                     subprocess.run(['7z', 'x', self.archive_file, '-o' + extract_in], capture_output=True, text=True)
             except Exception as e:
-                logger.error(f"Error while exctracting: {e}")
+                logging.error(f"Error while exctracting: {e}")
                 return False
             else:
                 logging.info(f"Dataset extracted in '{self.exdir}'.")
@@ -107,7 +98,7 @@ class database_loader:
                     subprocess.run([self.winrar, 'x', self.archive_file, extract_in], capture_output=True, text=True)
 
             except Exception as e:
-                logger.error(f"Error while exctracting: {e}")
+                logging.error(f"Error while exctracting: {e}")
                 return False
             else:
                 logging.info(f"Dataset extracted in '{self.exdir}'.")
@@ -221,7 +212,6 @@ class database_loader:
 # TO DO:
 # filter pristine images
 # refine logger
-# SettingWithCopyWarning pandas
 
 class tid2013_loader(database_loader):
     def __init__(self, filter, as_training=False):
@@ -252,7 +242,7 @@ class tid2013_loader(database_loader):
             return
 
         if self.data_exist():
-            logger.info("Loading data...")
+            logging.info("Loading data...")
             self.metadata = pd.read_csv(os.path.join(self.exdir, 'metadata.csv'))
             self.X = np.load(os.path.join(self.exdir, 'X.npy'))
             self.y_reg = np.load(os.path.join(self.exdir, 'y_reg.npy'))
@@ -262,16 +252,12 @@ class tid2013_loader(database_loader):
                 self.metadata, self.X = self.cross(self.metadata, self.X, self.distortion_mapping, self.distortion_mapping_kadid10k, as_training=as_training)
                 self.y_reg = np.array(self.metadata[self.measureName], dtype=np.float32)  
                 self.y_class = np.array(self.metadata['distortion'], dtype=np.int64)
-                self.num_classes = len(self.distortion_mapping_kadid10k)+1
-
-            else:
-                pass
-                #logging.error("Error parsing database.")                  
+                self.num_classes = len(self.distortion_mapping_kadid10k)+1                 
         else:
-            self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data(filter)
-        logger.info("TID2013 loaded successfully.")                                       
+            self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data()
+        logging.info("TID2013 loaded successfully.")                                       
         
-    def prepare_data(self, filter):
+    def prepare_data(self):
         data_path = os.path.join(self.exdir, 'mos_with_names.txt')
         database = pd.read_csv(data_path, header=None, delimiter=' ')
         database = database.iloc[:, [1, 0]]  # swap column order
@@ -304,7 +290,7 @@ class kadid10k_loader(database_loader):
             return
 
         if self.data_exist():
-            logger.info("Loading data...")
+            logging.info("Loading data...")
             self.metadata = pd.read_csv(os.path.join(self.exdir, 'metadata.csv'))
             self.X = np.load(os.path.join(self.exdir, 'X.npy'))
             self.y_reg = np.load(os.path.join(self.exdir, 'y_reg.npy'))
@@ -314,14 +300,13 @@ class kadid10k_loader(database_loader):
                 self.metadata, self.X = self.cross(self.metadata, self.X, self.distortion_mapping, self.distortion_mapping_tid2013, as_training=as_training)
                 self.y_reg = np.array(self.metadata[self.measureName], dtype=np.float32)  
                 self.y_class = np.array(self.metadata['distortion'], dtype=np.int64)
-                self.num_classes = len(self.distortion_mapping_tid2013)+1               
-            else:
-                logging.error("Error parsing database.")
-        else:
-            self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data(filter)
-        logger.info("KADID-10k loaded successfully.")        
+                self.num_classes = len(self.distortion_mapping_tid2013)+1     
 
-    def prepare_data(self, filter):
+        else:
+            self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data()
+        logging.info("KADID-10k loaded successfully.")        
+
+    def prepare_data(self):
         database_path = os.path.join(self.exdir, 'dmos.csv')
         database = pd.read_csv(database_path, header=0, usecols=[0, 2])
         database.columns = ['image', 'DMOS']
