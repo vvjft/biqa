@@ -5,11 +5,13 @@ import os
 
 from data_loader import tid2013_loader, kadid10k_loader
 from tensorflow.keras import layers, models
+from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_absolute_error
 from scipy.stats import spearmanr, pearsonr, kendalltau
 from scipy.optimize import curve_fit
 
+import matplotlib.pyplot as plt
 # TO DO:
     # verify mos2dmos mapping
     # refine sequentializing labels
@@ -20,11 +22,11 @@ def split_data(metadata, measureName, validation=True):
     metadata['original_index'] = metadata['original_index'].astype(int)
     
     groups = metadata.groupby('image_id').agg(list).reset_index()
-    train, test = train_test_split(groups, test_size=0.2, stratify=groups['distortion'], random_state=42)
+    train, test = train_test_split(groups, test_size=0.2, stratify = groups['class'], random_state=42)
     meta_sets = []
     
     if validation:
-        train, val = train_test_split(train, test_size=0.25, stratify=train['distortion'], random_state=42)
+        train, val = train_test_split(train, test_size=0.25, stratify = train['class'], random_state=42)
         datasets = [train, val, test]
     else:
         datasets = [train, test]
@@ -46,11 +48,27 @@ def mos2dmos(mos, dmos):
         return a / (1 + np.exp(-c * (x - d))) + b
 
     initial_params = [0, 0, 0, np.median(mos)]
+    sorted_mos = np.sort(mos)
+    sorted_dmos = np.sort(dmos)
     if len(mos) > len(dmos):
-        dmos = np.random.choice(mos, size=len(mos), replace=False)
+        sorted_mos = np.sort(np.random.choice(mos, size=len(dmos), replace=False))
     else:
-        dmos = np.random.choice(np.sort(dmos), size=len(mos), replace=False)
-    params, _ = curve_fit(logistic_function, mos, dmos, p0=initial_params, maxfev=10000)
+        sorted_dmos = np.sort(np.random.choice(dmos, size=len(mos), replace=False))
+    params, _ = curve_fit(logistic_function, sorted_mos, sorted_dmos, p0=initial_params, maxfev=10000)
+
+    # Plotting the mapping
+    #plt.figure(figsize=(10, 6))
+    
+    # Plot the fitted logistic function
+    #plt.scatter(sorted_mos, sorted_dmos, label='Original Data', color='blue')
+    #plt.plot(sorted_mos, logistic_function(sorted_mos, *params), label='Fitted Logistic Function', color='red')
+    
+    #plt.xlabel('MOS')
+    #plt.ylabel('DMOS')
+    #plt.title('MOS to DMOS Mapping')
+    #plt.legend()
+    #plt.show()
+
 
     return logistic_function(mos, *params)
     
@@ -69,6 +87,18 @@ def build_model(num_classes):
     model = models.Model(inputs=inputs, outputs=[regression_output, classification_output])
     return model
 
+def build_model0(): # no classification
+    model = models.Sequential([
+        layers.Input(shape=(32, 32, 1)),
+        layers.Conv2D(50, (7, 7), activation='relu'),
+        layers.GlobalMaxPooling2D(),
+        layers.Dense(800, activation='relu'),
+        layers.Dense(800, activation='relu'),
+        layers.Dropout(0.5),
+        layers.Dense(1, activation='linear')
+    ])
+    return model
+    
 def build_model2(): # no classification
     model = models.Sequential([
         layers.Input(shape=(32, 32, 1)),
@@ -127,7 +157,7 @@ def show_results(meta_test, y_pred_reg, y_pred_class, measureName, distortion_ma
     with open('results.txt', 'w') as file:
         file.write('All:\n')
         
-        file.write(f'  PLCC (Linear Correlation Coefficient): {lcc}\n')
+        file.write(f'  PLCC (Pearson Linear Correlation Coefficient): {lcc}\n')
         file.write(f'  SROCC (Spearman Rank Order Correlation Coefficient): {srocc}\n')
         file.write(f'  KRCC (Kendall Rank Correlation Coefficient): {krcc}\n')
         file.write(f'  MAE (Mean Absolute Error): {mae}\n')
@@ -162,6 +192,8 @@ def main(training, test, epochs, classify=True):
     if test==training:
         measureName = training_loader.measureName
         distortion_mapping = training_loader.distortion_mapping
+        bins = [1,2,3,4,5,6,7,8,9]
+        training_data['class'] = np.digitize(training_data[measureName], bins)-1
         meta_train, meta_val, meta_test  = split_data(training_data, measureName)
         train_indices, val_indices, test_indices = meta_train.index, meta_val.index, meta_test.index
         X_test =  X[test_indices]
@@ -198,9 +230,10 @@ def main(training, test, epochs, classify=True):
         model.fit(X_train, [y_train_reg,  y_train_class], epochs=epochs, batch_size=32, verbose=2)
         y_pred_reg, y_pred_class = model.predict(X_test, verbose=2)
     else:
+        early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
         model = build_model2()
         model.compile(optimizer='adam', loss='mean_absolute_error')
-        model.fit(X_train, y_train_reg, epochs=epochs, batch_size=32, verbose=2)
+        model.fit(X_train, y_train_reg, epochs=epochs, batch_size=32, verbose=2, validation_data=(X_val, y_val_reg), callbacks=[early_stopping])
         y_pred_reg = model.predict(X_test, verbose=2)
         y_pred_class = None
   
