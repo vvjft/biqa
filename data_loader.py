@@ -56,6 +56,7 @@ class database_loader:
         self.archive_file = ''  # Path to the rar/zip file
         self.metadata = None    # Dataframe with filenames, mos/dmos and distortion types
         self.num_classes = None # Number of different distortions
+        self.quality_clusters = None # Categories of quality (0 - very bad, 1 - bad, ...) 
         
     def data_exist(self):
         '''Check if patch files are present in the directory.'''
@@ -229,6 +230,8 @@ class tid2013_loader(database_loader):
         self.distortion_mapping_kadid10k = {11: 'wn', 12:'wnc', 13:'inoise', 1: 'gblur',
                                          15:'idn', 10: 'jpeg', 9: 'jp2k',
                                          18:'meanshft', 14:'mnoise', 6:'dith_quant'}
+
+        self.quality_clusters = 7
             
         #self.distortion_mapping_live = {1: 'wn', 2:'wnc', 3:'scn', 4:'mn', 5:'hfn', 
         #                             6:'inoise', 7:'qn', 8: 'gblur', 9:'idn', 10: 'jpeg',
@@ -284,7 +287,7 @@ class kadid10k_loader(database_loader):
                                         2: 'wnc', 9: 'idn', 6: 'inoise', 19:'mnoise', 16:'meanshft'} 
                                                                           
         self.num_classes = len(self.distortion_mapping)+1                                                                     
-         
+        self.quality_clusters = 5 
         if not self.download():
             logging.error("Failed to download or extract the database.")
             return

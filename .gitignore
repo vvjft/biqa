@@ -10,3 +10,5 @@ logs/
 *.csv
 config.ini
 results.txt
+*.h5
+inspect_data.py
