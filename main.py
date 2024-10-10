@@ -63,11 +63,12 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', type=int, default = 1, help='Number of epochs (default: 1)')
     parser.add_argument('--n_trials', type=int, default = 1, help='Number of trials for hyperparameter tuning (default: 1)')
     parser.add_argument('--classify', action='store_true', help='Enable distortion classification')
+    parser.add_argument('--use_val', action='store_true', help='Use validation set for training')
     args = parser.parse_args()
 
     if args.test == None:
         args.test = args.training
-    training, test, epochs, classify, n_trials = args.training, args.test, args.epochs, args.classify, args.n_trials
+    training, test, epochs, classify, n_trials, use_val = args.training, args.test, args.epochs, args.classify, args.n_trials, args.use_val
 
     ### Set-up for training ###
     databases = {'tid2013': tid2013_loader, 'kadid10k': kadid10k_loader}
@@ -81,7 +82,7 @@ if __name__ == "__main__":
     # Categorize quality scores
     k = training_loader.quality_clusters
     temp_x = training_data[training_loader.measureName].values.reshape(-1, 1) # rename this variable 
-    kmeans = KMeans(n_clusters=k)
+    kmeans = KMeans(n_clusters=k, random_state=42)
     kmeans.fit(temp_x)
     training_data['class'] = kmeans.labels_
     cluster_means = training_data.groupby('class')[training_loader.measureName].mean().reset_index()
@@ -122,58 +123,94 @@ if __name__ == "__main__":
     y_train_reg, y_val_reg = y_reg[train_indices], y_reg[val_indices]
     y_train_class, y_val_class = y_class[train_indices], y_class[val_indices]
 
+
     ### Training    Tuning     Loading the model ###
     if args.command == 'learn':
-        X_train = np.concatenate((X_train, X_val), axis=0)
-        y_train_reg = np.concatenate((y_train_reg, y_val_reg), axis=0)
-        y_train_class = np.concatenate((y_train_class, y_val_class), axis=0)
-        early_stopping = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True)
 
-        class_weight = {0: 1, 1:1, 2:1, 3:1, 4:1, 5:1, 6:1, 7:1, 8:1, 9: 1, 10: 1, 11:1, 12:1,
-            13:1, 14:2, 15:2, 16:2, 17:2, 18:1, 19:2, 20:2, 21:1, 22:1, 23:1}
-        class_weight = np.array([class_weight[i] for i in range(len(class_weight))], dtype=np.float32)
+        if not use_val:
+            X_train = np.concatenate((X_train, X_val), axis=0)
+            y_train_reg = np.concatenate((y_train_reg, y_val_reg), axis=0)
+            y_train_class = np.concatenate((y_train_class, y_val_class), axis=0)
+            early_stopping = EarlyStopping(monitor='loss' if not classify else 'regression_output_loss', 
+                patience=5, restore_best_weights=True)
+            validation_data = None
+
+        y_train_combined = tf.stack([
+            tf.cast(y_train_class, tf.float32),  
+            tf.cast(y_train_reg, tf.float32)     
+            ], axis=1)
+        y_val_combined = tf.stack([
+            tf.cast(y_val_class, tf.float32),  
+            tf.cast(y_val_reg, tf.float32)     
+            ], axis=1)
+        
+        if use_val:
+            validation_data = (X_val, y_val_combined)
+            early_stopping = EarlyStopping(monitor='val_loss' if not classify else 'val_regression_output_loss', 
+                patience=5, restore_best_weights=True)
+
 
         if classify:    
             model = build_model(num_classes)
             model.compile(optimizer='adam', 
-                loss={'classification_output': 'sparse_categorical_crossentropy', 'regression_output': custom_loss(class_weight)},
-                loss_weights={'classification_output': 0.2, 'regression_output': 1.0})
-            y_train_combined = tf.stack([y_train_class, y_train_reg], axis=1)    
-            model.fit(X_train, [y_train_reg,  y_train_class], epochs=epochs, batch_size=32, verbose=2, callbacks=[early_stopping])
+                loss=[custom_loss(), 'sparse_categorical_crossentropy'],
+                loss_weights=[1.0, 0.0])     
+            model.fit(X_train,[y_train_combined, y_train_class], 
+                epochs=epochs, batch_size=32, verbose=2, callbacks=[early_stopping])
+
             y_pred_reg, y_pred_class = model.predict(X_test, verbose=2)
-        else:
-            
-            model = build_model2()
-            model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.004345225000648434), loss='mean_absolute_error')
-            model.fit(X_train, y_train_reg, epochs=epochs, batch_size=50, verbose=2, callbacks=[early_stopping])
-            y_pred_reg = model.predict(X_test, verbose=2)
-            y_pred_class = None
+        else:       
+            #model = build_model0()
+            #model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.004345225000648434), loss='mean_absolute_error')
+            #model.fit(X_train, y_train_combined, epochs=epochs, batch_size=50, verbose=2, callbacks=[early_stopping])
+            #y_pred_reg = model.predict(X_test, verbose=2)
+            model = build_model2(0.039162586811347835, 0.039162586811347835, 1425, 1320)
+            model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.0034345226193916636), loss=custom_loss())
+            model.fit(X_train, y_train_combined, epochs=epochs, batch_size=32, verbose=2, validation_data=validation_data, 
+                callbacks=[early_stopping])
+            y_pred_reg, y_pred_class = model.predict(X_test, verbose=2), None
     
         evaluate(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping, single, classify)
         model.save('iqa.h5')
 
     elif args.command == 'tune':
+        y_train_combined = tf.stack([
+            tf.cast(y_train_class, tf.float32),  
+            tf.cast(y_train_reg, tf.float32)     
+            ], axis=1)
+
+        y_val_combined = tf.stack([
+            tf.cast(y_val_class, tf.float32),  
+            tf.cast(y_val_reg, tf.float32)     
+            ], axis=1)
+
         def objective(trial):
             global best_model
             global lcc
             early_stopping = EarlyStopping(monitor='val_loss' if not classify else 'val_regression_output_loss', 
-                               patience=10, restore_best_weights=True)
+                               patience=5, restore_best_weights=True)
 
+            n_neurons1 = trial.suggest_int('n_neurons1', 100, 1500)
+            n_neurons2 = trial.suggest_int('n_neurons2', 100, 1500)
             eta = trial.suggest_float('eta', 1e-3, 1e-2)
+            dropout_rate1 =trial.suggest_float('dropout_rate1', 0, 0.8)
+            dropout_rate2 =trial.suggest_float('dropout_rate2', 0, 0.8)
             batch_size = trial.suggest_int('batch_size', 20, 50)
-            if classify:    
-                #class_weight = {0: 1, 1:1, 2:1, 3:1, 4:1, 5:1, 6:1, 7:1, 8:1, 9: 1, 10: 1, 11:1, 12:1,
-                #                13:1, 14:2, 15:2, 16:2, 17:2, 18:1, 19:2, 20:2, 21:1, 22:1, 23:1}    
+            
+            if classify:        
                 model = build_model(num_classes)
                 model.compile(optimizer=keras.optimizers.Adam(learning_rate=eta), 
-                    loss={'classification_output': 'sparse_categorical_crossentropy', 'regression_output': 'mean_absolute_error'},
-                    loss_weights={'classification_output': 0.2, 'regression_output': 1.0})
-                model.fit(X_train, [y_train_reg,  y_train_class], epochs=epochs, batch_size=batch_size, verbose=2, validation_data=(X_val, y_val_reg), callbacks=[early_stopping])
+                    loss=[custom_loss(), 'sparse_categorical_crossentropy'],
+                    loss_weights=[1.0, 0.0])
+                model.fit(X_train, [y_train_combined,  y_train_class], epochs=epochs, 
+                    batch_size=batch_size, verbose=2, validation_data=(X_val, [y_val_combined, y_val_class]), callbacks=[early_stopping])
+
                 y_pred_reg, y_pred_class = model.predict(X_test, verbose=2)
             else:
-                model = build_model2()
-                model.compile(optimizer=keras.optimizers.Adam(learning_rate=eta), loss={'regression_output': 'mean_absolute_error'})
-                model.fit(X_train, y_train_reg, epochs=epochs, batch_size=batch_size, verbose=2, validation_data=(X_val, y_val_reg), callbacks=[early_stopping])
+                model = build_model2(dropout_rate1, dropout_rate2, n_neurons1, n_neurons2)
+                model.compile(optimizer=keras.optimizers.Adam(learning_rate=eta), loss=custom_loss())
+                model.fit(X_train, y_train_combined, epochs=epochs, batch_size=batch_size, verbose=2, validation_data=(X_val, y_val_combined), 
+                    callbacks=[early_stopping, optuna.integration.TFKerasPruningCallback(trial, 'val_loss')])
                 y_pred_reg, y_pred_class = model.predict(X_test, verbose=2), None
                 
             data = meta_test.copy()

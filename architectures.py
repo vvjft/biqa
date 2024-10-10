@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import tensorflow as tf
 import os
 
 from tensorflow.keras import layers, models
@@ -22,12 +23,30 @@ def build_model(num_classes):
     model = models.Model(inputs=inputs, outputs=[regression_output, classification_output])
     return model
 
-def build_model2(): # no classification
+def build_model0(n_neurons1, n_neurons2, dropout_rate): # no classification
+
+    inputs = layers.Input(shape=(32, 32, 1))
+    
+    x = layers.Conv2D(50, (7, 7), activation='relu', padding='same')(inputs)
+    x = layers.BatchNormalization()(x)
+    x = layers.MaxPooling2D((2, 2))(x)
+    x = layers.Dropout(dropout_rate)(x)
+    
+    x =  layers.Dense(n_neurons1, activation='relu')(x)
+    x =  layers.Dense(n_neurons2, activation='relu')(x)
+    x =  layers.Dropout(dropout_rate)(x)
+    regression_output = layers.Dense(1, activation='linear', name='regression_output')(x)
+    model = models.Model(inputs=inputs, outputs=regression_output)
+    return model
+
+
+def build_model2(dropout_rate1, dropout_rate2, n_neurons1, n_neurons2 ): # no classification
     inputs = layers.Input(shape=(32, 32, 1))
     
     x = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(inputs)
     x = layers.BatchNormalization()(x)
     x = layers.MaxPooling2D((2, 2))(x)
+    x = layers.Dropout(dropout_rate1)(x)
     
     x = layers.Conv2D(64, (3, 3), activation='relu', padding='same')(x)
     x = layers.BatchNormalization()(x)
@@ -42,26 +61,49 @@ def build_model2(): # no classification
     x = layers.MaxPooling2D((2, 2))(x)
     
     x = layers.Flatten()(x)
-    x = layers.Dense(512, activation='relu')(x)
+    x = layers.Dense(n_neurons1, activation='relu')(x)
+    x = layers.Dense(n_neurons2, activation='relu')(x)
     x = layers.BatchNormalization()(x)
-    x = layers.Dropout(0.5)(x)
+    x = layers.Dropout(dropout_rate2)(x)
     regression_output = layers.Dense(1, activation='linear', name='regression_output')(x)
     model = models.Model(inputs=inputs, outputs=regression_output)
     return model
-import tensorflow as tf
-def custom_loss(class_weight):
-    def weighted_loss(y_train, y_pred_reg):
-        y_train_class = tf.cast(y_train[:, 0], tf.int32)  # Convert class labels to integers
-        y_train_reg = y_train[:, 1:]  # The rest are regression targets
+
+def custom_loss():
+    def weighted_loss(y_true, y_pred):
+        y_true_class = tf.cast(y_true[:, 0], tf.int32)  
+        y_true_reg = tf.reshape(y_true[:, 1], tf.shape(y_pred))
+        mae_loss = tf.abs(y_true_reg - y_pred)
+
+        mask_14 = tf.cast(tf.equal(y_true_class, 14), tf.float32) * 5 
+        mask_15 = tf.cast(tf.equal(y_true_class, 15), tf.float32) * 3  
+        mask_16 = tf.cast(tf.equal(y_true_class, 16), tf.float32) * 7  
+        mask_17 = tf.cast(tf.equal(y_true_class, 17), tf.float32) * 3
+        mask_18 = tf.cast(tf.equal(y_true_class, 18), tf.float32) * 5  
+        mask_20 = tf.cast(tf.equal(y_true_class, 20), tf.float32) * 7  
+
+        mask_14 = tf.reshape(mask_14, tf.shape(mae_loss))
+        mask_15 = tf.reshape(mask_15, tf.shape(mae_loss))
+        mask_16 = tf.reshape(mask_16, tf.shape(mae_loss))
+        mask_17 = tf.reshape(mask_17, tf.shape(mae_loss))
+        mask_18 = tf.reshape(mask_18, tf.shape(mae_loss))
+        mask_20 = tf.reshape(mask_20, tf.shape(mae_loss))
+    
+        multiplier = 1 + mask_14 + mask_15 + mask_16 + mask_17 + mask_20
+        adjusted_mae_loss = mae_loss * multiplier
         
-        # Compute the Mean Absolute Error (MAE) loss using NumPy arrays
-        mae_loss = tf.reduce_mean(tf.abs(y_train_reg - y_pred_reg), axis=-1)
-        print(y_train_class)
-        weight = tf.gather(class_weight, y_train_class)
+        #tf.print("y_true_class_ref:", y_true_class_refs, summarize=-1)
+        #tf.print("weights:", weights, summarize=-1)
+        #tf.print("y_true:", y_true, summarize=-1)
+        #tf.print("y_true_class:", y_true_class, summarize=-1)
+        #tf.print("y_true_reg:", y_true_reg, summarize=-1)
+        #tf.print("y_pred:", y_pred, summarize=-1)
+        #tf.print("mask:", mask)
+        #tf.print("Mean Absolute Error:", mae_loss)
+        #tf.print("Adjusted Mean Absolute Error:", adjusted_mae_loss)
         
-        # Apply the class weights based on the class labels
-        weighted_mae_loss = mae_loss * weight
-        return weighted_mae_loss
+        return tf.reduce_mean(adjusted_mae_loss)
+    
     return weighted_loss
 
 def evaluate(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping, single, classify=False):
