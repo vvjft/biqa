@@ -251,11 +251,11 @@ class tid2013_loader(database_loader):
             self.y_reg = np.load(os.path.join(self.exdir, 'y_reg.npy'))
             self.y_class = np.load(os.path.join(self.exdir, 'y_class.npy')) 
 
-            if (filter != None) and (filter != 'tid2013'):             
-                self.metadata, self.X = self.cross(self.metadata, self.X, self.distortion_mapping, self.distortion_mapping_kadid10k, as_training=as_training)
-                self.y_reg = np.array(self.metadata[self.measureName], dtype=np.float32)  
-                self.y_class = np.array(self.metadata['distortion'], dtype=np.int64)
-                self.num_classes = len(self.distortion_mapping_kadid10k)+1                 
+            #if (filter != None) and (filter != 'tid2013'):             
+            #    self.metadata, self.X = self.cross(self.metadata, self.X, self.distortion_mapping, self.distortion_mapping_kadid10k, as_training=as_training)
+            #    self.y_reg = np.array(self.metadata[self.measureName], dtype=np.float32)  
+            #    self.y_class = np.array(self.metadata['distortion'], dtype=np.int64)
+            #    self.num_classes = len(self.distortion_mapping_kadid10k)+1                 
         else:
             self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data()
         logging.info("TID2013 loaded successfully.")                                       
@@ -299,11 +299,11 @@ class kadid10k_loader(database_loader):
             self.y_reg = np.load(os.path.join(self.exdir, 'y_reg.npy'))
             self.y_class = np.load(os.path.join(self.exdir, 'y_class.npy')) 
 
-            if (filter != None) and (filter != 'kadid10k'):             
-                self.metadata, self.X = self.cross(self.metadata, self.X, self.distortion_mapping, self.distortion_mapping_tid2013, as_training=as_training)
-                self.y_reg = np.array(self.metadata[self.measureName], dtype=np.float32)  
-                self.y_class = np.array(self.metadata['distortion'], dtype=np.int64)
-                self.num_classes = len(self.distortion_mapping_tid2013)+1     
+            #if (filter != None) and (filter != 'kadid10k'):             
+            #    self.metadata, self.X = self.cross(self.metadata, self.X, self.distortion_mapping, self.distortion_mapping_tid2013, as_training=as_training)
+            #    self.y_reg = np.array(self.metadata[self.measureName], dtype=np.float32)  
+            #    self.y_class = np.array(self.metadata['distortion'], dtype=np.int64)
+            #    self.num_classes = len(self.distortion_mapping_tid2013)+1     
 
         else:
             self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data()

@@ -6,10 +6,9 @@ import datetime
 
 from tensorflow.keras import layers, models
 from scipy.stats import spearmanr, pearsonr, kendalltau
-from scipy.optimize import curve_fit
 from sklearn.metrics import accuracy_score, mean_absolute_error
 
-def build_model(num_classes):
+def build_model(num_classes=0):
     inputs = layers.Input(shape=(32, 32, 1))
     x = layers.Conv2D(8, (3, 3), activation='relu')(inputs)
     x = layers.MaxPooling2D((2, 2))(x)
@@ -20,11 +19,11 @@ def build_model(num_classes):
     x = layers.Dense(512, activation='relu')(x)
     
     regression_output = layers.Dense(1, activation='linear', name='regression_output')(x)
-    classification_output = layers.Dense(num_classes, activation='softmax', name='classification_output')(x)
-    model = models.Model(inputs=inputs, outputs=[regression_output, classification_output])
+    #classification_output = layers.Dense(num_classes, activation='softmax', name='classification_output')(x)
+    model = models.Model(inputs=inputs, outputs=regression_output)
     return model
 
-def build_model0(n_neurons1, n_neurons2, dropout_rate): # no classification
+def build_model0(n_neurons1=1, n_neurons2=1, dropout_rate=0): # no classification
 
     inputs = layers.Input(shape=(32, 32, 1))
     
@@ -106,7 +105,7 @@ def custom_loss():
     
     return weighted_loss
 
-def evaluate(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping, single, classify=False, name='results.txt'):
+def evaluate(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping, classify=False):
     def group_results(metadata, measureName):
         metadata['prefix'] = metadata['image'].str.extract(r'(i\d+_\d+_\d+)_patch')
 
@@ -120,7 +119,7 @@ def evaluate(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mappin
         grouped.rename(columns={'prefix': 'image', 'measure': measureName, 'pred_measure': f'pred_{measureName}'}, inplace=True)
         return grouped
  
-    if single:
+    if classify:
         # when single database is tested, distortion labels start from 1
         sequential_mapping = {i+1: key for i, key in enumerate(sorted(distortion_mapping.keys()))}
     else:
