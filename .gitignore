@@ -7,6 +7,7 @@ archive/
 test.py
 *.log
 logs/
+wyniki/
 *.csv
 config.ini
 results.txt

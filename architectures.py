@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 import os
+import datetime
 
 from tensorflow.keras import layers, models
 from scipy.stats import spearmanr, pearsonr, kendalltau
@@ -39,34 +40,33 @@ def build_model0(n_neurons1, n_neurons2, dropout_rate): # no classification
     model = models.Model(inputs=inputs, outputs=regression_output)
     return model
 
-
-def build_model2(dropout_rate1, dropout_rate2, n_neurons1, n_neurons2 ): # no classification
-    inputs = layers.Input(shape=(32, 32, 1))
-    
-    x = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(inputs)
-    x = layers.BatchNormalization()(x)
-    x = layers.MaxPooling2D((2, 2))(x)
-    x = layers.Dropout(dropout_rate1)(x)
-    
-    x = layers.Conv2D(64, (3, 3), activation='relu', padding='same')(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.MaxPooling2D((2, 2))(x)
-    
-    x = layers.Conv2D(128, (3, 3), activation='relu', padding='same')(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.MaxPooling2D((2, 2))(x)
-    
-    x = layers.Conv2D(256, (3, 3), activation='relu', padding='same')(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.MaxPooling2D((2, 2))(x)
-    
-    x = layers.Flatten()(x)
-    x = layers.Dense(n_neurons1, activation='relu')(x)
-    x = layers.Dense(n_neurons2, activation='relu')(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.Dropout(dropout_rate2)(x)
-    regression_output = layers.Dense(1, activation='linear', name='regression_output')(x)
-    model = models.Model(inputs=inputs, outputs=regression_output)
+def build_model_82(n_neruons=512, dropout_rate=0.5): # no classification
+    model = models.Sequential([
+        layers.Input(shape=(32, 32, 1)),
+         
+        layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        
+        layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        
+        layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        
+        layers.Conv2D(256, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        
+        layers.Flatten(),
+        layers.Dense(n_neruons, activation='relu'),
+        layers.BatchNormalization(),
+        layers.Dropout(dropout_rate),
+        
+        layers.Dense(1, activation='linear')  
+    ])
     return model
 
 def custom_loss():
@@ -106,7 +106,7 @@ def custom_loss():
     
     return weighted_loss
 
-def evaluate(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping, single, classify=False):
+def evaluate(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping, single, classify=False, name='results.txt'):
     def group_results(metadata, measureName):
         metadata['prefix'] = metadata['image'].str.extract(r'(i\d+_\d+_\d+)_patch')
 
@@ -147,7 +147,13 @@ def evaluate(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mappin
     if classify:
         acc = accuracy_score(results['distortion'], results['pred_distortion'])
     
-    with open('results.txt', 'w') as file:
+
+    timestamp = datetime.datetime.now().strftime("%m-%d_%H-%M")
+    folder_path = './wyniki'
+    os.makedirs(folder_path, exist_ok=True)
+    filename = f"results_{timestamp}.txt"
+    filepath = os.path.join(folder_path, filename)
+    with open(filepath, 'w') as file:
         file.write('All:\n')   
         file.write(f'  PLCC (Pearson Linear Correlation Coefficient): {lcc}\n')
         file.write(f'  SROCC (Spearman Rank Order Correlation Coefficient): {srocc}\n')
@@ -171,5 +177,5 @@ def evaluate(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mappin
             file.write(f'  MAE: {group_mae}\n')
             if classify:
                 file.write(f'  ACC: {group_accuracy_score}\n')
-    print(f'Results saved to results.txt')
+    print(f'Results saved to {filepath}')
     return lcc
