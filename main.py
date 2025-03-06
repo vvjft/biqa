@@ -3,6 +3,7 @@ import keras
 import optuna
 import argparse
 import datetime
+import gc
 
 from data_loader import tid2013_loader, kadid10k_loader
 from architectures import *
@@ -10,7 +11,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.cluster import KMeans
 from scipy.optimize import curve_fit
 from tensorflow.keras.callbacks import EarlyStopping
-from keras import backend as K
 
 def split_data(metadata, measureName, validation=True):  
     metadata = metadata.reset_index().rename(columns={'index': 'original_index'})
@@ -56,37 +56,48 @@ def mos2dmos(mos, dmos):
 ### Training    Tuning     Loading the model ###
 def learn(model, X_train, y_train, val, epochs, early_stopping, loss_function, batch_size, learning_rate):
     model.compile(optimizer=keras.optimizers.Adam(learning_rate), loss=loss_function)
+    
     model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=1, validation_data=val, callbacks=[early_stopping])
+ 
     del X_train, y_train, val
-    # After training
-    K.clear_session()
-    y_pred_reg, y_pred_class = model.predict(X_test, verbose=1), None
+    
+    gc.collect()
+    tf.keras.backend.clear_session()
+    #with tf.device('/CPU:0'):  
+    y_pred_reg, y_pred_class = model.predict(X_test, batch_size=8, verbose=1), None
+    
     timestamp = datetime.datetime.now().strftime("%m-%d_%H-%M")
     modelname = f'model_{timestamp}.h5'
     model.save(modelname)
-    lcc = evaluate(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping, classify)
+    data = meta_test.copy()
+    lcc = evaluate(data, y_pred_reg, y_pred_class, measureName, distortion_mapping, classify)
+    del data
     return lcc
 
 def tune(n_trials, X_train, y_train_reg, y_train_class, validation_data, epochs, classify):
     def objective(trial):
-        n_neurons1 = trial.suggest_int('n_neurons1', 500, 1500)
+        n_neurons1 = trial.suggest_int('n_neurons1', 500, 1000)
+        n_neurons2 = trial.suggest_int('n_neurons2', 500, 1000)
+        n_neurons3= trial.suggest_int('n_neurons3', 500, 1000)
         eta = trial.suggest_float('eta', 1e-3, 1e-2)
         dropout_rate1 =trial.suggest_float('dropout_rate1', 0, 0.8)
-        batch_size = trial.suggest_int('batch_size', 20, 50)
+        #batch_size = trial.suggest_int('batch_size', 20, 50)
         early_stopping = EarlyStopping(monitor='val_loss' if not classify else 'val_regression_output_loss', 
-            patience=5, restore_best_weights=True)
+            patience=10, restore_best_weights=True)
         
         if classify:
-            model = build_model(num_classes)
+            model = build_model(n_neurons1, n_neurons2,  n_neurons3, dropout_rate1, num_classes)
             loss = ['mean_absolute_error', 'sparse_categorical_crossentropy']
             loss_weights = [1.0, 0.2]
             y_train = [y_train_reg, y_train_class]
         else:
-            model = build_model_82(n_neurons1, dropout_rate1)
+            model = build_model_82(n_neurons1, n_neurons2, dropout_rate1)
             loss = 'mean_absolute_error'
             y_train = y_train_reg
-    
-        lcc = learn(model, X_train, y_train, validation_data, epochs, early_stopping, loss, batch_size, learning_rate=eta)
+        
+        lcc = learn(model, X_train, y_train, validation_data, epochs, early_stopping, loss, 32, learning_rate=eta)
+        
+        tf.keras.backend.clear_session()
         return lcc
     
     study = optuna.create_study(direction="maximize")
@@ -104,7 +115,7 @@ if __name__ == "__main__":
     if gpus:
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
-
+    #tf.function(jit_compile=True)
     parser = argparse.ArgumentParser(description='Description to be filled')
     parser.add_argument('command', choices=['learn', 'load', 'tune'], default = 'tune', help='What to do.')
     parser.add_argument('--training', choices=['tid2013', 'kadid10k'], type=str, default='tid2013', help='Database for training set (default: tid2013)')
@@ -182,9 +193,10 @@ if __name__ == "__main__":
     else:
         validation_data = (X_val, y_val_reg)
         early_stopping = EarlyStopping(monitor='val_loss' if not classify else 'val_regression_output_loss', 
-            patience=10, restore_best_weights=True)
+            patience=50, restore_best_weights=True)
 
     if args.command == 'learn':
+        
         if classify:
             model = build_model(num_classes)
             loss = ['mean_absolute_error', 'sparse_categorical_crossentropy']
@@ -194,26 +206,26 @@ if __name__ == "__main__":
         else:
             model = build_model_82()
             loss = 'mean_absolute_error'
-            batch_size = 22
+            batch_size = 32
             y_train = y_train_reg
         learn(model, X_train, y_train, validation_data, epochs, early_stopping, 
-              loss, batch_size, learning_rate=0.001)
+              loss, batch_size, learning_rate=0.0010068833020626905)
 
     elif args.command == 'tune':
         tune(n_trials, X_train, y_train_reg, y_train_class, validation_data, epochs, classify)
 
                 
     elif args.command == 'load':
-        model = models.load_model('model_10-16_15-51.h5')
-        early_stopping = EarlyStopping(monitor='loss' if not classify else 'regression_output_loss', 
-            patience=5, restore_best_weights=True)
-        validation_data = None
+        model = models.load_model('model_10-23_04-44.h5')
+        early_stopping = EarlyStopping(monitor='val_loss' if not classify else 'regression_output_loss', 
+            patience=25, restore_best_weights=True)
+        #validation_data = None
         if classify:
-            y_pred_reg, y_pred_class = model.predict(X_test, verbose=2)
+            y_pred_reg, y_pred_class = model.predict(X_test, verbose=1)
         else:
             y_pred_class = None
-            #model.fit(X_train, y_train_reg, epochs=epochs, batch_size=22, verbose=2, validation_data=validation_data, 
-            #    callbacks=[early_stopping])
+            model.fit(X_train, y_train_reg, epochs=epochs, batch_size=22, verbose=1, validation_data=validation_data, 
+                callbacks=[early_stopping])
             y_pred_reg, y_pred_class = model.predict(X_test, verbose=1), None
         evaluate(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping, classify)
         model.save('iqa.h5')

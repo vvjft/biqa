@@ -8,15 +8,16 @@ from tensorflow.keras import layers, models
 from scipy.stats import spearmanr, pearsonr, kendalltau
 from sklearn.metrics import accuracy_score, mean_absolute_error
 
-def build_model(num_classes=0):
+def build_model(num_neurons1, num_neurons2, dropout_rate, num_classes=0):
     inputs = layers.Input(shape=(32, 32, 1))
     x = layers.Conv2D(8, (3, 3), activation='relu')(inputs)
     x = layers.MaxPooling2D((2, 2))(x)
     x = layers.Conv2D(32, (3, 3), activation='relu')(x)
     x = layers.MaxPooling2D((2, 2))(x)
     x = layers.Flatten()(x)
-    x = layers.Dense(128, activation='relu')(x)
-    x = layers.Dense(512, activation='relu')(x)
+    x = layers.Dense(num_neurons1, activation='relu')(x)
+    x = layers.Dense(num_neurons2, activation='relu')(x)
+    x =  layers.Dropout(dropout_rate)(x)
     
     regression_output = layers.Dense(1, activation='linear', name='regression_output')(x)
     #classification_output = layers.Dense(num_classes, activation='softmax', name='classification_output')(x)
@@ -39,7 +40,7 @@ def build_model0(n_neurons1=1, n_neurons2=1, dropout_rate=0): # no classificatio
     model = models.Model(inputs=inputs, outputs=regression_output)
     return model
 
-def build_model_82(n_neruons=512, dropout_rate=0.5): # no classification
+def build_model_82(n_neruons1=867, n_neruons2=629, n_neurons3=843, dropout_rate=0.42066100890636): # no classification
     model = models.Sequential([
         layers.Input(shape=(32, 32, 1)),
          
@@ -60,10 +61,19 @@ def build_model_82(n_neruons=512, dropout_rate=0.5): # no classification
         layers.MaxPooling2D((2, 2)),
         
         layers.Flatten(),
-        layers.Dense(n_neruons, activation='relu'),
+        layers.Dense(n_neruons1, activation='relu'),
+        layers.BatchNormalization(),
+        layers.Dropout(dropout_rate),
+
+        layers.Dense(n_neruons2, activation='relu'),  
         layers.BatchNormalization(),
         layers.Dropout(dropout_rate),
         
+
+        layers.Dense(n_neurons3, activation='relu'),  
+        layers.BatchNormalization(),
+        layers.Dropout(dropout_rate),
+
         layers.Dense(1, activation='linear')  
     ])
     return model
@@ -126,9 +136,9 @@ def evaluate(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mappin
         # when performing cross databse test, we sequentialize labels (starting from 0)
         sequential_mapping = {i: key for i, key in enumerate(sorted(distortion_mapping.keys()))}
     
-    meta_test[measureName] = pd.to_numeric(meta_test[measureName], errors='coerce').astype('float32')
+    meta_test[measureName] = pd.to_numeric(meta_test[measureName], errors='coerce').astype('float16')
     meta_test[f'pred_{measureName}'] = y_pred_reg.flatten()  
-    meta_test['distortion'] = pd.to_numeric(meta_test['distortion'], errors='coerce').fillna(0).astype('int64')
+    meta_test['distortion'] = pd.to_numeric(meta_test['distortion'], errors='coerce').fillna(0).astype('int16')
     meta_test['distortion'] = meta_test['distortion'].map(sequential_mapping).map(distortion_mapping)
     meta_test['pred_distortion'] = None
     
@@ -160,21 +170,21 @@ def evaluate(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mappin
         file.write(f'  MAE (Mean Absolute Error): {mae}\n')
         if classify:
             file.write(f'  ACC (Accuracy): {acc}\n')
-        distortions = results.groupby('distortion')
-        for name, distortion in distortions:
-            if classify:
-                group_accuracy_score = accuracy_score(distortion['distortion'], distortion['pred_distortion'])
-            group_lcc = pearsonr(distortion[f'pred_{measureName}'], distortion[measureName])[0]
-            group_srocc = spearmanr(distortion[f'pred_{measureName}'], distortion[measureName])[0]
-            group_krcc = kendalltau(distortion[f'pred_{measureName}'], distortion[measureName])[0]
-            group_mae = mean_absolute_error(distortion[measureName], distortion[f'pred_{measureName}'])
+        #distortions = results.groupby('distortion')
+        #for name, distortion in distortions:
+        #    if classify:
+        #        group_accuracy_score = accuracy_score(distortion['distortion'], distortion['pred_distortion'])
+        #    group_lcc = pearsonr(distortion[f'pred_{measureName}'], distortion[measureName])[0]
+        #    group_srocc = spearmanr(distortion[f'pred_{measureName}'], distortion[measureName])[0]
+        #    group_krcc = kendalltau(distortion[f'pred_{measureName}'], distortion[measureName])[0]
+        #    group_mae = mean_absolute_error(distortion[measureName], distortion[f'pred_{measureName}'])
         
-            file.write(f'{name}:\n')
-            file.write(f'  PLCC: {group_lcc}\n')
-            file.write(f'  SROCC: {group_srocc}\n')
-            file.write(f'  KRCC: {group_krcc}\n')
-            file.write(f'  MAE: {group_mae}\n')
-            if classify:
-                file.write(f'  ACC: {group_accuracy_score}\n')
+        #    file.write(f'{name}:\n')
+        #    file.write(f'  PLCC: {group_lcc}\n')
+        #    file.write(f'  SROCC: {group_srocc}\n')
+        #    file.write(f'  KRCC: {group_krcc}\n')
+        #    file.write(f'  MAE: {group_mae}\n')
+        #    if classify:
+        #        file.write(f'  ACC: {group_accuracy_score}\n')
     print(f'Results saved to {filepath}')
     return lcc
