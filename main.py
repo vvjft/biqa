@@ -1,4 +1,5 @@
 import tensorflow as tf
+import numpy as np
 import keras
 import optuna
 import argparse
@@ -7,70 +8,24 @@ import gc
 
 from data_loader import tid2013_loader, kadid10k_loader
 from architectures import *
-from sklearn.model_selection import train_test_split
-from sklearn.cluster import KMeans
-from scipy.optimize import curve_fit
+from utils import split_data, mos2dmos, evaluate
 from tensorflow.keras.callbacks import EarlyStopping
 
-def split_data(metadata, measureName, validation=True):  
-    metadata = metadata.reset_index().rename(columns={'index': 'original_index'})
-    metadata['image_id'] = metadata['image'].apply(lambda x: '_'.join(x.split('_')[:4]))
-    metadata['original_index'] = metadata['original_index'].astype(int)
-    
-    groups = metadata.groupby('image_id').agg(list).reset_index()
-    train, test = train_test_split(groups, test_size=0.2, stratify = groups['distortion'], random_state=42)
-    meta_sets = []
-    
-    if validation:
-        train, val = train_test_split(train, test_size=0.25, stratify = train['distortion'], random_state=42)
-        datasets = [train, val, test]
-    else:
-        datasets = [train, test]
-        
-    for dataset in datasets:
-        meta_set = dataset.explode(['image', measureName, 'distortion', 'original_index'])
-        meta_set['original_index'] = meta_set['original_index'].astype(int) 
-        meta_set.set_index('original_index', inplace=True) 
-        meta_sets.append(meta_set)
-        
-    return meta_sets 
-
-def mos2dmos(mos, dmos):
-    '''
-    Function that maps one measure score into the other.
-    Note: not necessarily mos to dmos. Can be dmos to mos or mos to mos
-    '''
-    def logistic_function(x, a, b, c, d):
-        return a / (1 + np.exp(-c * (x - d))) + b
-
-    initial_params = [0, 0, 0, np.median(mos)]
-    sorted_mos = np.sort(mos)
-    sorted_dmos = np.sort(dmos)
-    if len(mos) > len(dmos):
-        sorted_mos = np.sort(np.random.choice(mos, size=len(dmos), replace=False))
-    else:
-        sorted_dmos = np.sort(np.random.choice(dmos, size=len(mos), replace=False))
-    params, _ = curve_fit(logistic_function, sorted_mos, sorted_dmos, p0=initial_params, maxfev=10000)
-    return logistic_function(mos, *params)
-
 ### Training    Tuning     Loading the model ###
-def learn(model, X_train, y_train, val, epochs, early_stopping, loss_function, batch_size, learning_rate):
+def train(model, X_train, y_train, val, epochs, early_stopping, loss_function, batch_size, learning_rate):
     model.compile(optimizer=keras.optimizers.Adam(learning_rate), loss=loss_function)
-    
-    model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=1, validation_data=val, callbacks=[early_stopping])
- 
-    del X_train, y_train, val
-    
-    gc.collect()
-    tf.keras.backend.clear_session()
-    #with tf.device('/CPU:0'):  
-    y_pred_reg, y_pred_class = model.predict(X_test, batch_size=8, verbose=1), None
-    
+    model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=1, validation_data=val, callbacks=[early_stopping]) 
+    y_pred_reg = model.predict(X_test, batch_size=8, verbose=1)
+    print(y_pred_reg.shape)
+    print(len(y_pred_reg.flatten()))
+
     timestamp = datetime.datetime.now().strftime("%m-%d_%H-%M")
     modelname = f'model_{timestamp}.h5'
     model.save(modelname)
     data = meta_test.copy()
-    lcc = evaluate(data, y_pred_reg, y_pred_class, measureName, distortion_mapping, classify)
+    print(data.shape)
+
+    lcc = evaluate(data, y_pred_reg, measureName, distortion_mapping, classify)
     del data
     return lcc
 
@@ -115,45 +70,34 @@ if __name__ == "__main__":
     if gpus:
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
-    #tf.function(jit_compile=True)
+    
     parser = argparse.ArgumentParser(description='Description to be filled')
-    parser.add_argument('command', choices=['learn', 'load', 'tune'], default = 'tune', help='What to do.')
-    parser.add_argument('--training', choices=['tid2013', 'kadid10k'], type=str, default='tid2013', help='Database for training set (default: tid2013)')
-    parser.add_argument('--test', choices=['tid2013', 'kadid10k'], type=str, help='Database for test set. If not specified - evaluation is done on the trainig set')
+    parser.add_argument('command', choices=['train', 'load', 'tune'], default = 'tune', help='What to do.')
+    parser.add_argument('--training_set', choices=['tid2013', 'kadid10k'], type=str, default='tid2013', help='Database for training set (default: tid2013)')
+    parser.add_argument('--test_set', choices=['tid2013', 'kadid10k'], type=str, help='Database for test set. If not specified - evaluation is done on the trainig set')
     parser.add_argument('--epochs', type=int, default = 1, help='Number of epochs (default: 1)')
     parser.add_argument('--n_trials', type=int, default = 1, help='Number of trials for hyperparameter tuning (default: 1)')
     parser.add_argument('--classify', action='store_true', help='Enable distortion classification')
     parser.add_argument('--use_val', action='store_true', help='Use validation set for training')
     args = parser.parse_args()
 
-    if args.test == None:
-        args.test = args.training
-    training, test, epochs, classify, n_trials, use_val = args.training, args.test, args.epochs, args.classify, args.n_trials, args.use_val
+    if args.test_set == None:
+        args.test_set = args.training_set
+    training_set, test_set, epochs, classify, n_trials, use_val = args.training_set, args.test_set, args.epochs, args.classify, args.n_trials, args.use_val
     if args.command == 'tune':
         use_val = True
-
+    
     ### Set-up for training ###
     databases = {'tid2013': tid2013_loader, 'kadid10k': kadid10k_loader}
-    training_loader = databases[training](test, as_training=True)
+    training_loader = databases[training_set](test_set, as_training=True)
     num_classes = training_loader.num_classes
     training_data = training_loader.metadata
     X = training_loader.X
     y_reg = training_loader.y_reg
     y_class = training_loader.y_class
 
-    # Categorize quality scores
-    #k = training_loader.quality_clusters
-    #temp_x = training_data[training_loader.measureName].values.reshape(-1, 1) # rename this variable 
-    #kmeans = KMeans(n_clusters=k, random_state=42)
-    #kmeans.fit(temp_x)
-    #training_data['class'] = kmeans.labels_
-    #cluster_means = training_data.groupby('class')[training_loader.measureName].mean().reset_index()
-    #ordered_clusters = cluster_means.sort_values(by=training_loader.measureName)
-    #cluster_mapping = {old_label: new_label for new_label, old_label in enumerate(ordered_clusters['class'])}
-    #training_data['class']= training_data['class'].map(cluster_mapping)
-    
-    # Divide data
-    if test==training:
+    # Split data
+    if test_set == training_set:
         measureName = training_loader.measureName
         distortion_mapping = training_loader.distortion_mapping
         meta_train, meta_val, meta_test  = split_data(training_data, measureName)
@@ -161,14 +105,12 @@ if __name__ == "__main__":
         X_test = X[test_indices]
         y_test_reg = y_reg[test_indices]
         y_test_class = y_class[test_indices]     
-
     else:
-        test_loader = databases[test](training)
+        test_loader = databases[test_set](training_set)
         test_data = test_loader.metadata
         test_measureName = test_loader.measureName
         training_measureName = training_loader.measureName
         measureName = test_measureName
-        #distortion_mapping = getattr(training_loader, f'distortion_mapping_{test}')
         distortion_mapping = test_loader.distortion_mapping
         training_data[training_measureName] = mos2dmos(training_data[training_measureName], test_data[test_measureName])
         meta_train, meta_val = split_data(training_data, training_measureName, validation=False)
@@ -177,8 +119,7 @@ if __name__ == "__main__":
         X_test =  test_loader.X
         y_test_reg =  test_loader.y_reg
         y_test_class =  test_loader.y_class
-    del meta_train, meta_val
-    # Map indices to data       
+    
     X_train, X_val = X[train_indices], X[val_indices] 
     y_train_reg, y_val_reg = y_reg[train_indices], y_reg[val_indices]
     y_train_class, y_val_class = y_class[train_indices], y_class[val_indices]
@@ -195,8 +136,7 @@ if __name__ == "__main__":
         early_stopping = EarlyStopping(monitor='val_loss' if not classify else 'val_regression_output_loss', 
             patience=50, restore_best_weights=True)
 
-    if args.command == 'learn':
-        
+    if args.command == 'train':   
         if classify:
             model = build_model(num_classes)
             loss = ['mean_absolute_error', 'sparse_categorical_crossentropy']
@@ -204,17 +144,16 @@ if __name__ == "__main__":
             batch_size = 32
             y_train = [y_train_reg, y_train_class]
         else:
-            model = build_model_82()
+            model = build_model()
             loss = 'mean_absolute_error'
             batch_size = 32
             y_train = y_train_reg
-        learn(model, X_train, y_train, validation_data, epochs, early_stopping, 
-              loss, batch_size, learning_rate=0.0010068833020626905)
+        train(model, X_train, y_train, validation_data, epochs, early_stopping, 
+              loss, batch_size, learning_rate=0.001)
 
     elif args.command == 'tune':
         tune(n_trials, X_train, y_train_reg, y_train_class, validation_data, epochs, classify)
-
-                
+              
     elif args.command == 'load':
         model = models.load_model('model_10-23_04-44.h5')
         early_stopping = EarlyStopping(monitor='val_loss' if not classify else 'regression_output_loss', 
