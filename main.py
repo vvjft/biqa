@@ -5,6 +5,7 @@ import optuna
 import argparse
 import datetime
 import gc
+import copy
 
 from data_loader import tid2013_loader, kadid10k_loader
 from architectures import *
@@ -16,14 +17,11 @@ def train(model, X_train, y_train, val, epochs, early_stopping, loss_function, b
     model.compile(optimizer=keras.optimizers.Adam(learning_rate), loss=loss_function)
     model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=1, validation_data=val, callbacks=[early_stopping]) 
     y_pred_reg = model.predict(X_test, batch_size=8, verbose=1)
-    print(y_pred_reg.shape)
-    print(len(y_pred_reg.flatten()))
 
     timestamp = datetime.datetime.now().strftime("%m-%d_%H-%M")
     modelname = f'model_{timestamp}.h5'
     model.save(modelname)
-    data = meta_test.copy()
-    print(data.shape)
+    data = copy.deepcopy(meta_test)
 
     lcc = evaluate(data, y_pred_reg, measureName, distortion_mapping, classify)
     del data
@@ -33,24 +31,17 @@ def tune(n_trials, X_train, y_train_reg, y_train_class, validation_data, epochs,
     def objective(trial):
         n_neurons1 = trial.suggest_int('n_neurons1', 500, 1000)
         n_neurons2 = trial.suggest_int('n_neurons2', 500, 1000)
-        n_neurons3= trial.suggest_int('n_neurons3', 500, 1000)
         eta = trial.suggest_float('eta', 1e-3, 1e-2)
         dropout_rate1 =trial.suggest_float('dropout_rate1', 0, 0.8)
         #batch_size = trial.suggest_int('batch_size', 20, 50)
         early_stopping = EarlyStopping(monitor='val_loss' if not classify else 'val_regression_output_loss', 
-            patience=10, restore_best_weights=True)
+            patience=15, restore_best_weights=True)
         
-        if classify:
-            model = build_model(n_neurons1, n_neurons2,  n_neurons3, dropout_rate1, num_classes)
-            loss = ['mean_absolute_error', 'sparse_categorical_crossentropy']
-            loss_weights = [1.0, 0.2]
-            y_train = [y_train_reg, y_train_class]
-        else:
-            model = build_model_82(n_neurons1, n_neurons2, dropout_rate1)
-            loss = 'mean_absolute_error'
-            y_train = y_train_reg
+        model = build_model(n_neurons1, n_neurons2, dropout_rate1)
+        loss = 'mean_absolute_error'
+        y_train = y_train_reg
         
-        lcc = learn(model, X_train, y_train, validation_data, epochs, early_stopping, loss, 32, learning_rate=eta)
+        lcc = train(model, X_train, y_train, validation_data, epochs, early_stopping, loss, 32, learning_rate=eta)
         
         tf.keras.backend.clear_session()
         return lcc
@@ -89,7 +80,7 @@ if __name__ == "__main__":
     
     ### Set-up for training ###
     databases = {'tid2013': tid2013_loader, 'kadid10k': kadid10k_loader}
-    training_loader = databases[training_set](test_set, as_training=True)
+    training_loader = databases[training_set]()
     num_classes = training_loader.num_classes
     training_data = training_loader.metadata
     X = training_loader.X
@@ -134,7 +125,7 @@ if __name__ == "__main__":
     else:
         validation_data = (X_val, y_val_reg)
         early_stopping = EarlyStopping(monitor='val_loss' if not classify else 'val_regression_output_loss', 
-            patience=50, restore_best_weights=True)
+            patience=15, restore_best_weights=True)
 
     if args.command == 'train':   
         if classify:

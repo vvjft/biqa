@@ -68,7 +68,7 @@ def evaluate(meta_test, y_pred_reg, measureName, distortion_mapping, classify=Fa
     else:
         # when performing cross databse test, we sequentialize labels (starting from 0)
         sequential_mapping = {i: key for i, key in enumerate(sorted(distortion_mapping.keys()))}
-    print(meta_test.shape)
+
     meta_test[measureName] = pd.to_numeric(meta_test[measureName], errors='coerce').astype('float16')
     meta_test[f'pred_{measureName}'] = y_pred_reg.flatten()  
     meta_test['distortion'] = pd.to_numeric(meta_test['distortion'], errors='coerce').fillna(0).astype('int16')

@@ -215,7 +215,7 @@ class database_loader:
 # refine logger
 
 class tid2013_loader(database_loader):
-    def __init__(self, filter, as_training=False):
+    def __init__(self):
         super().__init__()
         self.url = 'https://www.ponomarenko.info/tid2013/tid2013.rar'
         self.exdir = os.path.join(self.catalogue, 'tid2013')
@@ -249,13 +249,7 @@ class tid2013_loader(database_loader):
             self.metadata = pd.read_csv(os.path.join(self.exdir, 'metadata.csv'))
             self.X = np.load(os.path.join(self.exdir, 'X.npy'))
             self.y_reg = np.load(os.path.join(self.exdir, 'y_reg.npy'))
-            self.y_class = np.load(os.path.join(self.exdir, 'y_class.npy')) 
-
-            #if (filter != None) and (filter != 'tid2013'):             
-            #    self.metadata, self.X = self.cross(self.metadata, self.X, self.distortion_mapping, self.distortion_mapping_kadid10k, as_training=as_training)
-            #    self.y_reg = np.array(self.metadata[self.measureName], dtype=np.float32)  
-            #    self.y_class = np.array(self.metadata['distortion'], dtype=np.int64)
-            #    self.num_classes = len(self.distortion_mapping_kadid10k)+1                 
+            self.y_class = np.load(os.path.join(self.exdir, 'y_class.npy'))                
         else:
             self.metadata, self.X, self.y_reg, self.y_class = self.prepare_data()
         logging.info("TID2013 loaded successfully.")                                       
