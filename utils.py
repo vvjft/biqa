@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import os
 import datetime
+import copy
 from sklearn.model_selection import train_test_split
 from scipy.optimize import curve_fit
 from scipy.stats import spearmanr, pearsonr, kendalltau
@@ -48,7 +49,7 @@ def mos2dmos(mos, dmos):
     params, _ = curve_fit(logistic_function, sorted_mos, sorted_dmos, p0=initial_params, maxfev=10000)
     return logistic_function(mos, *params)
 
-def evaluate(meta_test, y_pred_reg, measureName, distortion_mapping, classify=False):
+def evaluate(meta_test, y_pred_reg, measureName, distortion_mapping):
     def group_results(metadata, measureName):
         metadata['prefix'] = metadata['image'].str.extract(r'(i\d+_\d+_\d+)_patch')
 
@@ -56,37 +57,39 @@ def evaluate(meta_test, y_pred_reg, measureName, distortion_mapping, classify=Fa
             measure=(measureName, 'first'),  
             pred_measure=(f'pred_{measureName}', 'mean'),
             distortion=('distortion', 'first'),
-            pred_distortion = ('pred_distortion', lambda x: x.mode().iloc[0] if x.notna().any() else None)  
+            #pred_distortion = ('pred_distortion', lambda x: x.mode().iloc[0] if x.notna().any() else None)  
         ).reset_index()
 
         grouped.rename(columns={'prefix': 'image', 'measure': measureName, 'pred_measure': f'pred_{measureName}'}, inplace=True)
         return grouped
  
-    if classify:
-        # when single database is tested, distortion labels start from 1
-        sequential_mapping = {i+1: key for i, key in enumerate(sorted(distortion_mapping.keys()))}
-    else:
-        # when performing cross databse test, we sequentialize labels (starting from 0)
-        sequential_mapping = {i: key for i, key in enumerate(sorted(distortion_mapping.keys()))}
-
-    meta_test[measureName] = pd.to_numeric(meta_test[measureName], errors='coerce').astype('float16')
-    meta_test[f'pred_{measureName}'] = y_pred_reg.flatten()  
-    meta_test['distortion'] = pd.to_numeric(meta_test['distortion'], errors='coerce').fillna(0).astype('int16')
-    meta_test['distortion'] = meta_test['distortion'].map(sequential_mapping).map(distortion_mapping)
-    meta_test['pred_distortion'] = None
+    #if classify:
+    #    # when single database is tested, distortion labels start from 1
+    #    sequential_mapping = {i+1: key for i, key in enumerate(sorted(distortion_mapping.keys()))}
+    #else:
+    #    # when performing cross databse test, we sequentialize labels (starting from 0)
+    #    sequential_mapping = {i: key for i, key in enumerate(sorted(distortion_mapping.keys()))}
+    #sequential_mapping = {i+1: key for i, key in enumerate(sorted(distortion_mapping.keys()))}
+    meta_test_temp = pd.DataFrame()
+    meta_test_temp['image'] = meta_test['image']
+    meta_test_temp[measureName] = pd.to_numeric(meta_test[measureName], errors='coerce').astype('float16')
+    meta_test_temp[f'pred_{measureName}'] = y_pred_reg.flatten() 
+    meta_test_temp['distortion'] = pd.to_numeric(meta_test['distortion'], errors='coerce').fillna(0).astype('int16')
+    #meta_test_temp['distortion'] = meta_test_temp['distortion'].map(sequential_mapping).map(distortion_mapping)
+    meta_test_temp['distortion'] = meta_test['distortion'].map(distortion_mapping)
+    #meta_test['pred_distortion'] = None
     
 
-    results = group_results(meta_test, measureName)
-    results.to_csv('results.csv')
+    results = group_results(meta_test_temp, measureName)
+    timestamp = datetime.datetime.now().strftime("%m-%d_%H-%M")
+    results = meta_test_temp
+    results.to_csv(os.path.join('wyniki', f'results_{timestamp}.csv'))
 
     lcc = pearsonr(results[f'pred_{measureName}'], results[measureName])[0]
     srocc = spearmanr(results[f'pred_{measureName}'], results[measureName])[0]
     krcc = kendalltau(results[f'pred_{measureName}'], results[measureName])[0]
     mae = mean_absolute_error(results[measureName], results[f'pred_{measureName}'])
-
     
-
-    timestamp = datetime.datetime.now().strftime("%m-%d_%H-%M")
     folder_path = './wyniki'
     os.makedirs(folder_path, exist_ok=True)
     filename = f"results_{timestamp}.txt"
