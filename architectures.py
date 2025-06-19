@@ -32,3 +32,32 @@ def build_model(n_neurons1=8, n_neurons2=8, dropout_rate=0):
     regression_output = layers.Dense(1, activation='linear', name='regression_output')(x)
     model = models.Model(inputs=inputs, outputs=regression_output)
     return model
+
+def build_model_82(n_neruons=512, dropout_rate=0.5): 
+    model = models.Sequential([
+        layers.Input(shape=(32, 32, 1)),
+         
+        layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        
+        layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        
+        layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        
+        layers.Conv2D(256, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        
+        layers.Flatten(),
+        layers.Dense(n_neruons, activation='relu'),
+        layers.BatchNormalization(),
+        layers.Dropout(dropout_rate),
+        
+        layers.Dense(1, activation='linear')  
+    ])
+    return model

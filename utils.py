@@ -82,7 +82,7 @@ def evaluate(meta_test, y_pred_reg, measureName, distortion_mapping):
 
     results = group_results(meta_test_temp, measureName)
     timestamp = datetime.datetime.now().strftime("%m-%d_%H-%M")
-    results = meta_test_temp
+    #results = meta_test_temp
     results.to_csv(os.path.join('wyniki', f'results_{timestamp}.csv'))
 
     lcc = pearsonr(results[f'pred_{measureName}'], results[measureName])[0]

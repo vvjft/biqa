@@ -149,13 +149,13 @@ class database_loader:
         processed_images = 0
         logging.info('Preprocessing images...')
 
-        def normalize_image(patch, P=3, Q=3, C=1):
+        def normalize_image(image, P=3, Q=3, C=1):
             kernel = np.ones((P, Q)) / (P * Q)
-            patch_mean = convolve2d(patch, kernel, boundary='symm', mode='same')
-            patch_sm = convolve2d(np.square(patch), kernel, boundary='symm', mode='same')
-            patch_std = np.sqrt(np.maximum(patch_sm - np.square(patch_mean), 0)) + C
-            patch_ln = (patch - patch_mean) / patch_std
-            return patch_ln.astype('float32')
+            image_mean = convolve2d(image, kernel, boundary='symm', mode='same')
+            image_sm = convolve2d(np.square(image), kernel, boundary='symm', mode='same')
+            image_std = np.sqrt(np.maximum(image_sm - np.square(image_mean), 0)) + C
+            image_ln = (image - image_mean) / image_std
+            return image_ln.astype('float32')
         
         def slice_image(image, patch_size=32):
             height, width = image.shape[:2]
@@ -264,7 +264,7 @@ class tid2013_loader(database_loader):
         return database
     
 class kadid10k_loader(database_loader): 
-    def __init__(self, filter, as_training=False):
+    def __init__(self, as_training=False):
         super().__init__()
         self.url = 'https://datasets.vqa.mmsp-kn.de/archives/kadid10k.zip'
         self.exdir = os.path.join(self.catalogue, 'kadid10k')

@@ -18,9 +18,7 @@ def train(model, X_train, y_train, val, epochs, early_stopping, loss_function, b
     model.compile(optimizer=keras.optimizers.Adam(learning_rate), loss=loss_function)
     model.fit(X_train, y_train, epochs=epochs, batch_size=batch_size, verbose=1, validation_data=val, callbacks=[early_stopping]) 
     y_pred_reg = model.predict(X_test, verbose=1)
-    print(y_pred_reg.shape)
-    print(y_pred_reg)
-    print(y_pred_reg.flatten())
+
 
     timestamp = datetime.datetime.now().strftime("%m-%d_%H-%M")
     modelname = f'model_{timestamp}.h5'
@@ -36,18 +34,18 @@ def tune(n_trials, X_train, y_train_reg, validation_data, epochs):
         #n_neurons1 = trial.suggest_int('n_neurons1', 500, 1000)
         #n_neurons2 = trial.suggest_int('n_neurons2', 500, 1000)
         #eta = trial.suggest_float('eta', 1e-3, 1e-2)
-        n_neurons1 = trial.suggest_int('n_neurons1', 100,200)
-        n_neurons2 = trial.suggest_int('n_neurons2', 100,200)
-        eta = trial.suggest_float('eta', 1e-3, 1e-2)
-        #dropout_rate1 = trial.suggest_float('dropout_rate1', 0, 0.8)
+        n_neurons1 = trial.suggest_int('n_neurons1', 800,2000)
+        #n_neurons2 = trial.suggest_int('n_neurons2', 800,2000)
+        eta = trial.suggest_float('eta', 1e-3, 1e-1)
+        dropout_rate1 = trial.suggest_float('dropout_rate1', 0, 0.7)
         #batch_size = trial.suggest_int('batch_size', 20, 50)
-        early_stopping = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
+        early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, min_delta=0.001, baseline=0.90)
         
-        model = build_model(n_neurons1, n_neurons2)
+        model = build_model_82(n_neurons1, dropout_rate=dropout_rate1)
         loss = 'mean_absolute_error'
         y_train = y_train_reg
         
-        y_pred_reg = train(model, X_train, y_train, validation_data, epochs, early_stopping, loss_function=loss, batch_size=32, learning_rate=eta)
+        y_pred_reg = train(model, X_train, y_train, validation_data, epochs, early_stopping, loss_function=loss, batch_size=22, learning_rate=eta)
         lcc = evaluate(meta_test, y_pred_reg, measureName, distortion_mapping)
         
         tf.keras.backend.clear_session()
@@ -122,16 +120,16 @@ if __name__ == "__main__":
     if not use_val:
         X_train = np.concatenate((X_train, X_val), axis=0)
         y_train_reg = np.concatenate((y_train_reg, y_val_reg), axis=0)
-        early_stopping = EarlyStopping(monitor='loss', patience=5, restore_best_weights=True)
+        early_stopping = EarlyStopping(monitor='loss', patience=20, restore_best_weights=True)
         validation_data = None 
     else:
         validation_data = (X_val, y_val_reg)
-        early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+        early_stopping = EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True)
 
     if args.command == 'train':   
-        model = build_model()
-        loss = 'mean_absolute_error'
-        batch_size = 32
+        model = build_model_82()
+        loss = 'mse'
+        batch_size = 22
         y_train = y_train_reg
         y_pred_reg = train(model, X_train, y_train, validation_data, epochs, early_stopping, 
               loss, batch_size, learning_rate=0.001)
@@ -141,16 +139,12 @@ if __name__ == "__main__":
         tune(n_trials, X_train, y_train_reg, validation_data, epochs)
               
     elif args.command == 'load':
-        model = models.load_model('model_10-23_04-44.h5')
-        early_stopping = EarlyStopping(monitor='val_loss' if not classify else 'regression_output_loss', 
-            patience=25, restore_best_weights=True)
+        model = models.load_model('85.h5')
+        early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
         #validation_data = None
-        if classify:
-            y_pred_reg, y_pred_class = model.predict(X_test, verbose=1)
-        else:
-            y_pred_class = None
-            model.fit(X_train, y_train_reg, epochs=epochs, batch_size=22, verbose=1, validation_data=validation_data, 
-                callbacks=[early_stopping])
-            y_pred_reg, y_pred_class = model.predict(X_test, verbose=1), None
-        evaluate(meta_test, y_pred_reg, y_pred_class, measureName, distortion_mapping, classify)
+        #model.fit(X_train, y_train_reg, epochs=epochs, batch_size=22, verbose=1, validation_data=validation_data, 
+        #    callbacks=[early_stopping])
+        y_pred_reg = model.predict(X_test, verbose=1)
+        evaluate(meta_test, y_pred_reg, measureName, distortion_mapping)
+        model.summary()
         model.save('iqa.h5')
